@@ -1,4 +1,13 @@
-**/*.swp
 __pycache__
-*.pyc
+**.DS_Store
+**/*.swp
 *.log
+*.profiling
+.coverage
+.env
+.idea
+.venv
+.vscode
+/build
+/dist
+venv
