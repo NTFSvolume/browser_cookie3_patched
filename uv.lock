@@ -22,7 +22,7 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "browser-cookie3-patched"
+name = "browser-cookie3"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
