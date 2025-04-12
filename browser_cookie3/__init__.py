@@ -16,7 +16,7 @@ import struct
 import subprocess
 import sys
 import tempfile
-from io import BytesIO
+from io import BufferedReader, BytesIO
 from pathlib import Path
 from typing import ClassVar, Optional, TypedDict, Union
 
@@ -1122,7 +1122,7 @@ class LibreWolf(FirefoxBased):
         cookie_file: Optional[str] = None,
         domain_name: str = "",
         key_file: Optional[str] = None,
-    ) -> http.cookiejar.CookieJar:
+    ) -> None:
         args = {
             "linux_data_dirs": ["~/snap/librewolf/common/.librewolf", "~/.librewolf"],
             "windows_data_dirs": [
@@ -1140,57 +1140,56 @@ class Safari:
     APPLE_TO_UNIX_TIME = 978307200
     NEW_ISSUE_URL = "https://github.com/borisbabic/browser_cookie3/issues/new"
     NEW_ISSUE_MESSAGE = f"Page format changed.\nPlease create a new issue on: {NEW_ISSUE_URL}"
-    safari_cookies = [
+    safari_cookies: ClassVar[list[str]] = [
         "~/Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies",
         "~/Library/Cookies/Cookies.binarycookies",
     ]
 
-    def __init__(self, cookie_file: Optional[str] = None, domain_name: str = "", key_file=None) -> None:
+    def __init__(self, cookie_file: Optional[str] = None, domain_name: str = "") -> None:
         self.__offset = 0
         self.__domain_name = domain_name
-        self.__buffer = None
+        self.__buffer: BufferedReader = None  # type: ignore
         self.__open_file(cookie_file)
         self.__parse_header()
 
-    def __del__(self):
+    def __del__(self) -> None:
         if self.__buffer:
             self.__buffer.close()
 
-    def __open_file(self, cookie_file):
+    def __open_file(self, cookie_file: Optional[str] = None) -> None:
         cookie_file = cookie_file or _expand_paths(self.safari_cookies, "osx")
         if not cookie_file:
             raise BrowserCookieError("Can not find Safari cookie file")
-        self.__buffer = open(cookie_file, "rb")
+        self.__buffer: BufferedReader = Path(cookie_file).open("rb")
 
-    def __read_file(self, size: int, offset: int = None):
+    def __read_file(self, size: int, offset: Optional[int] = None) -> BytesIO:
         if offset is not None:
             self.__offset = offset
         self.__buffer.seek(self.__offset)
         self.__offset += size
         return BytesIO(self.__buffer.read(size))
 
-    def __parse_header(self):
+    def __parse_header(self) -> None:
         assert self.__buffer.read(4) == b"cook", "Not a safari cookie file"
-        self.__total_page = struct.unpack(">I", self.__buffer.read(4))[0]
-
-        self.__page_sizes = []
+        self.__total_page: int = struct.unpack(">I", self.__buffer.read(4))[0]
+        self.__page_sizes: list[int] = []
         for _ in range(self.__total_page):
             self.__page_sizes.append(struct.unpack(">I", self.__buffer.read(4))[0])
 
     @staticmethod
-    def __read_until_null(file: BytesIO, decode: bool = True):
-        data = []
+    def __read_until_null(file: BytesIO, decode: bool = True) -> Union[list[bytes], str]:
+        data: list[bytes] = []
         while True:
             byte = file.read(1)
             if byte == b"\x00":
                 break
             data.append(byte)
-        data = b"".join(data)
+        byte_array = b"".join(data)
         if decode:
-            data = data.decode("utf-8")
+            byte_array = byte_array.decode("utf-8")
         return data
 
-    def __parse_cookie(self, page: BytesIO, cookie_offset: int):
+    def __parse_cookie(self, page: BytesIO, cookie_offset: int) -> http.cookiejar.Cookie:
         page.seek(cookie_offset)
         # cookie size, keep it for future use and better understanding
         _ = struct.unpack("<I", page.read(4))[0]
@@ -1211,27 +1210,27 @@ class Safari:
         # creation time, keep it for future use and better understanding
         _ = int(struct.unpack("<d", page.read(8))[0] + self.APPLE_TO_UNIX_TIME)  # convert to unix time
 
-        page.seek(cookie_offset + host_offset, 0)
-        host = self.__read_until_null(page)
-        page.seek(cookie_offset + name_offset, 0)
-        name = self.__read_until_null(page)
-        page.seek(cookie_offset + path_offset, 0)
-        path = self.__read_until_null(page)
-        page.seek(cookie_offset + value_offset, 0)
-        value = self.__read_until_null(page)
+        def read_until_null(offset: int) -> str:
+            nonlocal page
+            page.seek(cookie_offset + offset, 0)
+            return self.__read_until_null(page)  # type: ignore
+
+        host = read_until_null(host_offset)
+        name = read_until_null(name_offset)
+        path = read_until_null(path_offset)
+        value = read_until_null(value_offset)
         if comment_offset:
-            page.seek(cookie_offset + comment_offset, 0)
             # comment, keep it for future use and better understanding
-            _ = self.__read_until_null(page)
+            _ = read_until_null(comment_offset)
 
         return create_cookie(host, path, is_secure, expiry_date, name, value, is_httponly)
 
-    def __domain_filter(self, cookie: http.cookiejar.Cookie):
+    def __domain_filter(self, cookie: http.cookiejar.Cookie) -> bool:
         if not self.__domain_name:
             return True
         return self.__domain_name in cookie.domain
 
-    def __parse_page(self, page_index: int):
+    def __parse_page(self, page_index: int) -> Generator[http.cookiejar.Cookie]:
         offset = 8 + self.__total_page * 4 + sum(self.__page_sizes[:page_index])
         page = self.__read_file(self.__page_sizes[page_index], offset)
         assert page.read(4) == b"\x00\x00\x01\x00", self.NEW_ISSUE_MESSAGE
@@ -1244,10 +1243,10 @@ class Safari:
         for offset in cookie_offsets:
             yield self.__parse_cookie(page, offset)
 
-    def load(self):
+    def load(self) -> http.cookiejar.CookieJar:
         cj = http.cookiejar.CookieJar()
-        for i in range(self.__total_page):
-            for cookie in self.__parse_page(i):
+        for page in range(self.__total_page):
+            for cookie in self.__parse_page(page):
                 if self.__domain_filter(cookie):
                     cj.set_cookie(cookie)
         return cj
@@ -1265,19 +1264,23 @@ class Lynx:
         self.cookie_file = _expand_paths(cookie_file or self.lynx_cookies, "linux")
         self.domain_name = domain_name
 
-    def load(self):
+    def load(self) -> http.cookiejar.CookieJar:
         cj = http.cookiejar.CookieJar()
         if not self.cookie_file:
             raise BrowserCookieError("Cannot find Lynx cookie file")
-        with open(self.cookie_file) as f:
+        with Path(self.cookie_file).open() as f:
             for line in f.read().splitlines():
                 # documentation in source code of lynx, file src/LYCookie.c
-                domain, domain_specified, path, secure, expires, name, value = [
+                domain, _, path, secure, expires, name, value = [
                     None if word == "" else word for word in line.split("\t")
                 ]
-                domain_specified = domain_specified == "TRUE"
+                assert domain is not None
+                assert path is not None
+                assert name is not None
+                if expires is not None:
+                    expires = int(expires)
                 secure = secure == "TRUE"
-                if domain.find(self.domain_name) >= 0:
+                if self.domain_name in domain:
                     cookie = create_cookie(domain, path, secure, expires, name, value, False)
                     cj.set_cookie(cookie)
         return cj
@@ -1322,7 +1325,7 @@ class W3m:
                 domain_specified = bool(flag & self.COO_DOMAIN)
                 path_specified = bool(flag & self.COO_PATH)
                 discard = bool(flag & self.COO_DISCARD)
-                if domain.find(self.domain_name) >= 0:
+                if self.domain_name in domain:
                     cookie = http.cookiejar.Cookie(
                         version,
                         name,
@@ -1345,26 +1348,35 @@ class W3m:
         return cj
 
 
-def create_cookie(host: str, path: str, secure, expires, name: str, value, http_only: bool) -> http.cookiejar.Cookie:
+def create_cookie(
+    host: str, path: str, secure: bool, expires: Optional[int], name: str, value: Optional[str], http_only: bool
+) -> http.cookiejar.Cookie:
     """Shortcut function to create a cookie"""
     # HTTPOnly flag goes in _rest, if present (see https://github.com/python/cpython/pull/17471/files#r511187060)
+    rest = {"HTTPOnly": ""} if http_only else {}
+    port = comment = comment_url = None
+    port_speficied = bool(port)
+    version = 0
+    domain_specified = domain_initial_dot = host.startswith(".")
+    path_specified = bool(path)
+    discard = False
     return http.cookiejar.Cookie(
-        0,
+        version,
         name,
         value,
-        None,
-        False,
+        port,
+        port_speficied,
         host,
-        host.startswith("."),
-        host.startswith("."),
+        domain_specified,
+        domain_initial_dot,
         path,
-        True,
+        path_specified,
         secure,
         expires,
-        False,
-        None,
-        None,
-        {"HTTPOnly": ""} if http_only else {},
+        discard,
+        comment,
+        comment_url,
+        rest,
     )
 
 
@@ -1458,11 +1470,11 @@ def librewolf(
     return LibreWolf(cookie_file, domain_name, key_file).load()
 
 
-def safari(cookie_file: Optional[str] = None, domain_name: str = "", key_file=None):
+def safari(cookie_file: Optional[str] = None, domain_name: str = "", _=None):
     """Returns a cookiejar of the cookies and sessions used by Safari. Optionally
     pass in a domain name to only load cookies from the specified domain
     """
-    return Safari(cookie_file, domain_name, key_file).load()
+    return Safari(cookie_file, domain_name).load()
 
 
 def lynx(cookie_file: Optional[str] = None, domain_name: str = "") -> http.cookiejar.CookieJar:
