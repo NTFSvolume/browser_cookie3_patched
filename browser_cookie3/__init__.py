@@ -1,5 +1,6 @@
 import importlib.metadata
 from collections.abc import Callable, Generator, Iterable
+from pathlib import Path
 
 __version__ = importlib.metadata.version("browser_cookie3")
 
@@ -17,7 +18,6 @@ import sys
 import tempfile
 from abc import ABC, abstractmethod
 from io import BufferedReader, BytesIO
-from pathlib import Path
 from typing import Any, ClassVar, Literal, NewType, Optional, TypedDict, Union, get_args
 
 shadowcopy = None
@@ -968,7 +968,7 @@ class FirefoxBased(_Browser):
         )
 
     def __add_session_cookies(self, cj: http.cookiejar.CookieJar) -> None:
-        if not Path(self.session_file).exists():
+        if not os.path.exists(self.session_file):
             return
         try:
             with Path(self.session_file).open("rb") as file_obj:
@@ -982,7 +982,7 @@ class FirefoxBased(_Browser):
                         cj.set_cookie(self.__create_session_cookie(cookie))
 
     def __add_session_cookies_lz4(self, cj: http.cookiejar.CookieJar) -> None:
-        if not Path(self.session_file_lz4).exists():
+        if not os.path.exists(self.session_file_lz4):
             return
         try:
             with Path(self.session_file_lz4).open("rb") as file_obj:
