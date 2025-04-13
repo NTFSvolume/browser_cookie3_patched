@@ -41,10 +41,10 @@ jobs:
 
           sudo apt update
           sudo apt install -y opera-stable brave-browser vivaldi-stable librewolf
-          
+
           # chrome, chromium, edge, and firefox are already installed
           # See: https://github.com/actions/runner-images/blob/main/images/linux/Ubuntu2204-Readme.md
-        
+
       - name: Install patched geckodriver
         run: |
           tag=$(curl -fsSL 'https://api.github.com/repos/rafiibrahim8/geckodriver-unchained/releases/latest' | jq -r '.tag_name')

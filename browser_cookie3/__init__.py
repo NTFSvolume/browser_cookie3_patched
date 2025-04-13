@@ -1,11 +1,10 @@
 import importlib.metadata
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator
 
 __version__ = importlib.metadata.version("browser_cookie3")
 
 import base64
 import configparser
-import contextlib
 import glob
 import http.cookiejar
 import json
@@ -18,7 +17,7 @@ import sys
 import tempfile
 from io import BufferedReader, BytesIO
 from pathlib import Path
-from typing import Any, ClassVar, Optional, TypedDict, Union
+from typing import Any, ClassVar, Literal, Optional, TypedDict, Union, get_args
 
 shadowcopy = None
 IS_LINUX = IS_WINDOWS = IS_MACOS = False
@@ -64,6 +63,7 @@ class WinEnvPath(TypedDict):
     env: str
 
 
+SupportedOS = Literal["windows", "osx", "linux"]
 ExpandablePaths = Union[list[str], str]
 WindowsOnlyExpandablePaths = Union[WinEnvPath, list[WinEnvPath]]
 AnyExpandablePaths = Union[ExpandablePaths, WindowsOnlyExpandablePaths]
@@ -71,7 +71,7 @@ AnyExpandablePaths = Union[ExpandablePaths, WindowsOnlyExpandablePaths]
 
 def _windows_group_policy_path() -> Optional[str]:
     # we know that we're running under windows at this point so it's safe to do these imports
-    from winreg import HKEY_LOCAL_MACHINE, REG_EXPAND_SZ, REG_SZ, ConnectRegistry, OpenKeyEx, QueryValueEx
+    from winreg import HKEY_LOCAL_MACHINE, REG_EXPAND_SZ, REG_SZ, ConnectRegistry, OpenKeyEx, QueryValueEx  # type: ignore  # noqa: I001
 
     try:
         root = ConnectRegistry(None, HKEY_LOCAL_MACHINE)
@@ -90,21 +90,22 @@ def _windows_group_policy_path() -> Optional[str]:
 def _crypt_unprotect_data(
     cipher_text: bytes = b"", entropy: bytes = b"", reserved=None, prompt_struct=None, is_key: bool = False
 ) -> Union[tuple[Optional[str], bytes], tuple[Optional[str], str]]:
-    # we know that we're running under windows at this point so it's safe to try these imports
+    assert IS_WINDOWS
     import ctypes
     import ctypes.wintypes
 
     class DataBlob(ctypes.Structure):
         _fields_: ClassVar = [("cbData", ctypes.wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
-    blob_in, blob_entropy, blob_out = (
-        DataBlob(len(x), ctypes.create_string_buffer(x)) for x in [cipher_text, entropy, b""]
-    )
+        def __init__(self, data: bytes):
+            super().__init__(len(data), ctypes.create_string_buffer(data))
+
+    blob_in, blob_entropy, blob_out = (DataBlob(data) for data in [cipher_text, entropy, b""])
     desc = ctypes.c_wchar_p()
 
     CRYPTPROTECT_UI_FORBIDDEN = 0x01
 
-    if not ctypes.windll.crypt32.CryptUnprotectData(
+    if not ctypes.windll.crypt32.CryptUnprotectData(  # type: ignore
         ctypes.byref(blob_in),
         ctypes.byref(desc),
         ctypes.byref(blob_entropy),
@@ -118,7 +119,7 @@ def _crypt_unprotect_data(
     description = desc.value
     buffer_out = ctypes.create_string_buffer(int(blob_out.cbData))
     ctypes.memmove(buffer_out, blob_out.pbData, blob_out.cbData)
-    map(ctypes.windll.kernel32.LocalFree, [desc, blob_out.pbData])
+    map(ctypes.windll.kernel32.LocalFree, [desc, blob_out.pbData])  # type: ignore
     if is_key:
         return description, buffer_out.raw
     return description, buffer_out.value
@@ -142,40 +143,36 @@ def _expand_win_path(path: Union[WinEnvPath, str]) -> str:
     return os.path.join(app_data, path["path"])
 
 
-def _expand_paths_impl(paths: AnyExpandablePaths, os_name: str) -> Generator[str]:
+def _expand_paths_impl(paths: AnyExpandablePaths, os_name: SupportedOS) -> Generator[str]:
     """Expands user paths on Linux, OSX, and windows"""
-
-    os_name = os_name.lower()
-    assert os_name in ["windows", "osx", "linux"]
-
+    assert os_name in get_args(SupportedOS)
     if isinstance(paths, str):
-        use_paths = [paths]
+        paths_list = [paths]
     elif isinstance(paths, list):
-        use_paths = paths
+        paths_list = paths
     else:
-        use_paths = [paths]
-
-    if len(use_paths) == 0:
+        paths_list = [paths]
+    if len(paths_list) == 0:
         return
 
     if os_name == "windows":
-        final_paths: Iterable[str] = map(_expand_win_path, use_paths)
+        expand: Callable[..., Union[bytes, str]] = _expand_win_path
     else:
-        assert not any(isinstance(p, dict) for p in use_paths), "Windows only paths are not supported in this platform"
-        final_paths = map(os.path.expanduser, use_paths)  # type: ignore
+        assert not any(isinstance(p, dict) for p in paths_list), "Windows only paths are not supported in this platform"
+        expand = os.path.expanduser
 
-    for path in final_paths:
+    for path in map(expand, paths_list):  # type: ignore
         # glob will return results in arbitrary order. sorted() is use to make output predictable.
         # can use return here without using `_expand_paths()` below.
         # but using generator can be useful if we plan to parse all `Cookies` files later.
         yield from sorted(glob.iglob(path))
 
 
-def _expand_paths(paths: AnyExpandablePaths, os_name: str) -> Optional[str]:
+def _expand_paths(paths: AnyExpandablePaths, os_name: SupportedOS) -> Optional[str]:
     return next(_expand_paths_impl(paths, os_name), None)
 
 
-def _normalize_genarate_paths_chromium(
+def _normalize_paths_chromium(
     paths: ExpandablePaths, channel: Optional[ExpandablePaths] = None
 ) -> tuple[list[str], list[str]]:
     channel = channel or [""]
@@ -186,10 +183,10 @@ def _normalize_genarate_paths_chromium(
     return list(paths), list(channel)
 
 
-def _genarate_nix_paths_chromium(paths: ExpandablePaths, channel: Optional[ExpandablePaths] = None) -> list[str]:
+def _generate_nix_paths_chromium(paths: ExpandablePaths, channel: Optional[ExpandablePaths] = None) -> list[str]:
     """Generate paths for chromium based browsers on *nix systems."""
 
-    paths, channel = _normalize_genarate_paths_chromium(paths, channel)
+    paths, channel = _normalize_paths_chromium(paths, channel)
     generated_paths: list[str] = []
     for chan in channel:
         for path in paths:
@@ -197,10 +194,10 @@ def _genarate_nix_paths_chromium(paths: ExpandablePaths, channel: Optional[Expan
     return generated_paths
 
 
-def _genarate_win_paths_chromium(paths: ExpandablePaths, channel: Optional[ExpandablePaths] = None) -> list[WinEnvPath]:
+def _generate_win_paths_chromium(paths: ExpandablePaths, channel: Optional[ExpandablePaths] = None) -> list[WinEnvPath]:
     """Generate paths for chromium based browsers on windows"""
 
-    paths, channel = _normalize_genarate_paths_chromium(paths, channel)
+    paths, channel = _normalize_paths_chromium(paths, channel)
     generated_paths: list[WinEnvPath] = []
     for chan in channel:
         for path in paths:
@@ -221,7 +218,7 @@ class _JeepneyConnection:
     def __init__(self, object_path: str, bus_name: str, interface: str) -> None:
         self.__dbus_address = jeepney.DBusAddress(object_path, bus_name, interface)
 
-    def __enter__(self):
+    def __enter__(self) -> "_JeepneyConnection":
         self.__connection = open_dbus_connection()
         return self
 
@@ -231,7 +228,7 @@ class _JeepneyConnection:
     def close(self) -> None:
         self.__connection.close()
 
-    def call_method(self, method_name: str, signature: Optional[str] = None, *args):
+    def call_method(self, method_name: str, signature: Optional[str] = None, *args: Any) -> Any:
         method = jeepney.new_method_call(self.__dbus_address, method_name, signature, args)
         response = self.__connection.send_and_get_reply(method)
         if response.header.message_type == jeepney.MessageType.error:
@@ -244,19 +241,13 @@ class _LinuxPasswordManager:
 
     _APP_ID = "browser-cookie3"
 
-    def __init__(self):
-        self.__methods_map: dict[str, Callable[..., bytes]] = {
-            "kwallet": self.__get_kdewallet_password_jeepney,
-            "secretstorage": self.__get_secretstorage_item_jeepney,
-        }
-
     def get_password(self, os_crypt_name: str) -> bytes:
         try:
             return self.__get_secretstorage_password(os_crypt_name)
         except RuntimeError:
             pass
         try:
-            return self.__methods_map["kwallet"](os_crypt_name)
+            return self.__get_kdewallet_password_jeepney(os_crypt_name)
         except RuntimeError:
             pass
         # try default peanuts password, probably won't work
@@ -266,18 +257,17 @@ class _LinuxPasswordManager:
         schemas = ["chrome_libsecret_os_crypt_password_v2", "chrome_libsecret_os_crypt_password_v1"]
         for schema in schemas:
             try:
-                return self.__methods_map["secretstorage"](schema, os_crypt_name)
+                return self.__get_secretstorage_item_jeepney(schema, os_crypt_name)
             except RuntimeError:
                 pass
         raise RuntimeError(f"Can not find secret for {os_crypt_name}")
 
     def __get_secretstorage_item_jeepney(self, schema: str, application: str) -> bytes:
-        args = ["/org/freedesktop/secrets", "org.freedesktop.secrets", "org.freedesktop.Secret.Service"]
-        with _JeepneyConnection(*args) as connection:
-            object_path_1 = connection.call_method(
-                "SearchItems", "a{ss}", {"xdg:schema": schema, "application": application}
-            )
-            object_path_list: list = list(filter(lambda x: len(x), object_path_1))
+        con_params = ["/org/freedesktop/secrets", "org.freedesktop.secrets", "org.freedesktop.Secret.Service"]
+        with _JeepneyConnection(*con_params) as connection:
+            params = {"xdg:schema": schema, "application": application}
+            object_path_1 = connection.call_method("SearchItems", "a{ss}", params)
+            object_path_list: list = [obj for obj in object_path_1 if len(obj) > 0]
             if len(object_path_list) == 0:
                 raise RuntimeError(f"Can not find secret for {application}")
             object_path: str = object_path_list[0][0]
@@ -289,8 +279,8 @@ class _LinuxPasswordManager:
     def __get_kdewallet_password_jeepney(self, os_crypt_name: str) -> bytes:
         folder = f"{os_crypt_name.capitalize()} Keys"
         key = f"{os_crypt_name.capitalize()} Safe Storage"
-        args = ["/modules/kwalletd5", "org.kde.kwalletd5", "org.kde.KWallet"]
-        with _JeepneyConnection(*args) as connection:
+        con_params = ["/modules/kwalletd5", "org.kde.kwalletd5", "org.kde.KWallet"]
+        with _JeepneyConnection(*con_params) as connection:
             network_wallet = connection.call_method("networkWallet")
             handle = connection.call_method("open", "sxs", network_wallet, 0, self._APP_ID)
             has_folder: bool = connection.call_method("hasFolder", "iss", handle, folder, self._APP_ID)
@@ -305,21 +295,20 @@ class _LinuxPasswordManager:
 class _DatabaseConnetion:
     def __init__(self, database_file: str, try_legacy_first: bool = False) -> None:
         self.__database_file = database_file
-        self.__temp_cookie_file = None
+        self.__temp_cookie_file: Optional[str] = None
         self.__connection = None
         self.__methods = [self.__sqlite3_connect_readonly]
         if try_legacy_first:
             self.__methods.insert(0, self.__get_connection_legacy)
         else:
             self.__methods.append(self.__get_connection_legacy)
-
         if shadowcopy:
             self.__methods.append(self.__get_connection_shadowcopy)
 
     def __enter__(self) -> sqlite3.Connection:
         return self.get_connection()
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
 
     def __check_connection_ok(self, connection: sqlite3.Connection) -> bool:
@@ -370,15 +359,12 @@ class _DatabaseConnetion:
                 return con
         raise BrowserCookieError("Unable to read database file")
 
-    def cursor(self) -> sqlite3.Cursor:
-        return self.connection().cursor()
-
     def close(self) -> None:
         if self.__connection:
             self.__connection.close()
         if self.__temp_cookie_file:
             try:
-                Path(self.__temp_cookie_file).unlink(missing_ok=True)
+                os.remove(self.__temp_cookie_file)
             except Exception:
                 pass
 
@@ -406,6 +392,10 @@ class ChromiumBased:
         self.key_file = key_file
         self.__add_key_and_cookie_file(**kwargs)
 
+    def __get_key_from_password(self, password: Union[bytes, str], iterations: int) -> bytes:
+        """Derive one or more keys from a password (or passphrase)."""
+        return PBKDF2(password, self.salt, self.length, iterations)  # type: ignore
+
     def __add_key_and_cookie_file(
         self,
         linux_cookies: Optional[ExpandablePaths],
@@ -416,30 +406,30 @@ class ChromiumBased:
         osx_key_service: Optional[str] = None,
         osx_key_user: Optional[str] = None,
     ):
-        if sys.platform == "darwin":
+        if IS_MACOS:
             assert osx_cookies is not None
             assert osx_key_service is not None
             assert osx_key_user is not None
             password = _get_osx_keychain_password(osx_key_service, osx_key_user)
             iterations = 1003  # number of pbkdf2 iterations on mac
-            self.v10_key: bytes | None = PBKDF2(password, self.salt, self.length, iterations)  # type: ignore
+            self.v10_key = self.__get_key_from_password(password, iterations)
             cookie_file = self.cookie_file or _expand_paths(osx_cookies, "osx")
 
-        elif sys.platform.startswith("linux") or "bsd" in sys.platform.lower():
+        elif IS_LINUX:
             assert os_crypt_name is not None
             assert linux_cookies is not None
             password = _LinuxPasswordManager().get_password(os_crypt_name)
             iterations = 1
-            self.v10_key = PBKDF2(CHROMIUM_DEFAULT_PASSWORD, self.salt, self.length, iterations)  # type: ignore
-            self.v11_key = PBKDF2(password, self.salt, self.length, iterations)  # type: ignore
+            self.v10_key = self.__get_key_from_password(CHROMIUM_DEFAULT_PASSWORD, iterations)
+            self.v11_key = self.__get_key_from_password(password, iterations)
 
             # Due to a bug in previous version of chromium,
             # the key used to encrypt the cookies in some linux systems was empty
             # After the bug was fixed, old cookies are still encrypted with an empty key
-            self.v11_empty_key = PBKDF2(b"", self.salt, self.length, iterations)  # type: ignore
+            self.v11_empty_key = self.__get_key_from_password(b"", iterations)  # type: ignore
             cookie_file = self.cookie_file or _expand_paths(linux_cookies, "linux")
 
-        elif sys.platform == "win32":
+        elif IS_WINDOWS:
             assert windows_keys is not None
             assert windows_cookies is not None
             key_file = self.key_file or _expand_paths(windows_keys, "windows")
@@ -450,13 +440,14 @@ class ChromiumBased:
 
                     # Decode Key, get rid of DPAPI prefix, unprotect data
                     keydpapi = base64.standard_b64decode(key64)[5:]
-                    _, self.v10_key = _crypt_unprotect_data(keydpapi, is_key=True)
+                    _, v10_key = _crypt_unprotect_data(keydpapi, is_key=True)
+                    assert isinstance(v10_key, bytes)
+                    self.v10_key = v10_key
             else:
-                self.v10_key = None
+                self.v10_key: Optional[bytes] = None
 
             # get cookie file from APPDATA
             cookie_file = self.cookie_file
-
             if not cookie_file:
                 if self.browser.lower() == "chrome" and (group_policy_path := _windows_group_policy_path()):
                     cookie_file = group_policy_path
@@ -471,7 +462,7 @@ class ChromiumBased:
 
         self.cookie_file = cookie_file
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.browser
 
     def load(self) -> http.cookiejar.CookieJar:
@@ -480,11 +471,11 @@ class ChromiumBased:
         assert self.cookie_file is not None
         with _DatabaseConnetion(self.cookie_file) as con:
             con.text_factory = _text_factory
-            cur = con.cursor()
-            has_integrity_check_for_cookie_domain = self._has_integrity_check_for_cookie_domain(cur)
+            cursor = con.cursor()
+            has_integrity_check_for_cookie_domain = self._has_integrity_check_for_cookie_domain(cursor)
             try:
                 # chrome <=55
-                cur.execute(
+                cursor.execute(
                     "SELECT host_key, path, secure, expires_utc, name, value, encrypted_value, is_httponly "
                     "FROM cookies WHERE host_key like ?;",
                     (f"%{self.domain_name}%",),
@@ -492,18 +483,17 @@ class ChromiumBased:
             except sqlite3.OperationalError:
                 try:
                     # chrome >=56
-                    cur.execute(
+                    cursor.execute(
                         "SELECT host_key, path, is_secure, expires_utc, name, value, encrypted_value, is_httponly "
                         "FROM cookies WHERE host_key like ?;",
                         (f"%{self.domain_name}%",),
                     )
                 except sqlite3.OperationalError as e:
                     if e.args[0].startswith(("no such table: ", "file is not a database")):
-                        raise BrowserCookieError(
-                            f"File {self.tmp_cookie_file} is not a Chromium-based browser cookie file"
-                        )
+                        msg = f"File {self.cookie_file} is not a Chromium-based browser cookie file"
+                        raise BrowserCookieError(msg) from None
 
-            for item in cur.fetchall():
+            for item in cursor.fetchall():
                 # Per https://github.com/chromium/chromium/blob/main/base/time/time.h#L5-L7,
                 # Chromium-based browsers store cookies' expiration timestamps as MICROSECONDS elapsed
                 # since the Windows NT epoch (1601-01-01 0:00:00 GMT), or 0 for session cookies.
@@ -558,7 +548,7 @@ class ChromiumBased:
     def _decrypt(self, value: str, encrypted_value: bytes, has_integrity_check_for_cookie_domain: bool = False) -> str:
         """Decrypt encoded cookies"""
 
-        if sys.platform == "win32":
+        if IS_WINDOWS:
             try:
                 return self._decrypt_windows_chromium(value, encrypted_value)
 
@@ -595,7 +585,8 @@ class ChromiumBased:
         encrypted_value = encrypted_value[3:]
 
         for key in keys:
-            cipher = AES.new(key, AES.MODE_CBC, self.iv)  # type: ignore
+            assert key is not None
+            cipher = AES.new(key, AES.MODE_CBC, self.iv)
 
             # will rise Value Error: invalid padding byte if the key is wrong,
             # probably we did not got the key and used peanuts
@@ -619,7 +610,7 @@ class Chrome(ChromiumBased):
         key_file: Optional[str] = None,
     ) -> None:
         args: dict[str, AnyExpandablePaths] = {
-            "linux_cookies": _genarate_nix_paths_chromium(
+            "linux_cookies": _generate_nix_paths_chromium(
                 [
                     "~/.config/google-chrome{channel}/Default/Cookies",
                     "~/.config/google-chrome{channel}/Profile */Cookies",
@@ -628,7 +619,7 @@ class Chrome(ChromiumBased):
                 ],
                 channel=["", "-beta", "-unstable"],
             ),
-            "windows_cookies": _genarate_win_paths_chromium(
+            "windows_cookies": _generate_win_paths_chromium(
                 [
                     "Google\\Chrome{channel}\\User Data\\Default\\Cookies",
                     "Google\\Chrome{channel}\\User Data\\Default\\Network\\Cookies",
@@ -637,14 +628,14 @@ class Chrome(ChromiumBased):
                 ],
                 channel=["", " Beta", " Dev"],
             ),
-            "osx_cookies": _genarate_nix_paths_chromium(
+            "osx_cookies": _generate_nix_paths_chromium(
                 [
                     "~/Library/Application Support/Google/Chrome{channel}/Default/Cookies",
                     "~/Library/Application Support/Google/Chrome{channel}/Profile */Cookies",
                 ],
                 channel=["", " Beta", " Dev"],
             ),
-            "windows_keys": _genarate_win_paths_chromium(
+            "windows_keys": _generate_win_paths_chromium(
                 "Google\\Chrome{channel}\\User Data\\Local State", channel=["", " Beta", " Dev"]
             ),
             "os_crypt_name": "chrome",
@@ -664,7 +655,7 @@ class Arc(ChromiumBased):
         key_file: Optional[str] = None,
     ) -> None:
         args: dict[str, AnyExpandablePaths] = {
-            "osx_cookies": _genarate_nix_paths_chromium(
+            "osx_cookies": _generate_nix_paths_chromium(
                 [
                     "~/Library/Application Support/Arc/User Data/Default/Cookies",
                     "~/Library/Application Support/Arc/User Data/Profile */Cookies",
@@ -694,7 +685,7 @@ class Chromium(ChromiumBased):
                 "~/.var/app/org.chromium.Chromium/config/chromium/Default/Cookies",
                 "~/.var/app/org.chromium.Chromium/config/chromium/Profile */Cookies",
             ],
-            "windows_cookies": _genarate_win_paths_chromium(
+            "windows_cookies": _generate_win_paths_chromium(
                 [
                     "Chromium\\User Data\\Default\\Cookies",
                     "Chromium\\User Data\\Default\\Network\\Cookies",
@@ -706,7 +697,7 @@ class Chromium(ChromiumBased):
                 "~/Library/Application Support/Chromium/Default/Cookies",
                 "~/Library/Application Support/Chromium/Profile */Cookies",
             ],
-            "windows_keys": _genarate_win_paths_chromium("Chromium\\User Data\\Local State"),
+            "windows_keys": _generate_win_paths_chromium("Chromium\\User Data\\Local State"),
             "os_crypt_name": "chromium",
             "osx_key_service": "Chromium Safe Storage",
             "osx_key_user": "Chromium",
@@ -734,7 +725,7 @@ class Opera(ChromiumBased):
                 "~/.var/app/com.opera.Opera/config/opera-beta/Cookies"
                 "~/.var/app/com.opera.Opera/config/opera-developer/Cookies",
             ],
-            "windows_cookies": _genarate_win_paths_chromium(
+            "windows_cookies": _generate_win_paths_chromium(
                 ["Opera Software\\Opera {channel}\\Cookies", "Opera Software\\Opera {channel}\\Network\\Cookies"],
                 channel=["Stable", "Next", "Developer"],
             ),
@@ -743,7 +734,7 @@ class Opera(ChromiumBased):
                 "~/Library/Application Support/com.operasoftware.OperaNext/Cookies",
                 "~/Library/Application Support/com.operasoftware.OperaDeveloper/Cookies",
             ],
-            "windows_keys": _genarate_win_paths_chromium(
+            "windows_keys": _generate_win_paths_chromium(
                 "Opera Software\\Opera {channel}\\Local State", channel=["Stable", "Next", "Developer"]
             ),
             "os_crypt_name": "chromium",
@@ -764,12 +755,12 @@ class OperaGX(ChromiumBased):
     ) -> None:
         args: dict[str, AnyExpandablePaths] = {
             "linux_cookies": [],  # Not available on Linux
-            "windows_cookies": _genarate_win_paths_chromium(
+            "windows_cookies": _generate_win_paths_chromium(
                 ["Opera Software\\Opera GX {channel}\\Cookies", "Opera Software\\Opera GX {channel}\\Network\\Cookies"],
                 channel=["Stable"],
             ),
             "osx_cookies": ["~/Library/Application Support/com.operasoftware.OperaGX/Cookies"],
-            "windows_keys": _genarate_win_paths_chromium(
+            "windows_keys": _generate_win_paths_chromium(
                 "Opera Software\\Opera GX {channel}\\Local State", channel=["Stable"]
             ),
             "os_crypt_name": "chromium",
@@ -789,7 +780,7 @@ class Brave(ChromiumBased):
         key_file: Optional[str] = None,
     ) -> None:
         args: dict[str, AnyExpandablePaths] = {
-            "linux_cookies": _genarate_nix_paths_chromium(
+            "linux_cookies": _generate_nix_paths_chromium(
                 [
                     "~/.config/BraveSoftware/Brave-Browser{channel}/Default/Cookies",
                     "~/.config/BraveSoftware/Brave-Browser{channel}/Profile */Cookies",
@@ -798,7 +789,7 @@ class Brave(ChromiumBased):
                 ],
                 channel=["", "-Beta", "-Dev", "-Nightly"],
             ),
-            "windows_cookies": _genarate_win_paths_chromium(
+            "windows_cookies": _generate_win_paths_chromium(
                 [
                     "BraveSoftware\\Brave-Browser{channel}\\User Data\\Default\\Cookies",
                     "BraveSoftware\\Brave-Browser{channel}\\User Data\\Default\\Network\\Cookies",
@@ -807,14 +798,14 @@ class Brave(ChromiumBased):
                 ],
                 channel=["", "-Beta", "-Dev", "-Nightly"],
             ),
-            "osx_cookies": _genarate_nix_paths_chromium(
+            "osx_cookies": _generate_nix_paths_chromium(
                 [
                     "~/Library/Application Support/BraveSoftware/Brave-Browser{channel}/Default/Cookies",
                     "~/Library/Application Support/BraveSoftware/Brave-Browser{channel}/Profile */Cookies",
                 ],
                 channel=["", "-Beta", "-Dev", "-Nightly"],
             ),
-            "windows_keys": _genarate_win_paths_chromium(
+            "windows_keys": _generate_win_paths_chromium(
                 "BraveSoftware\\Brave-Browser{channel}\\User Data\\Local State",
                 channel=["", "-Beta", "-Dev", "-Nightly"],
             ),
@@ -835,7 +826,7 @@ class Edge(ChromiumBased):
         key_file: Optional[str] = None,
     ) -> None:
         args: dict[str, AnyExpandablePaths] = {
-            "linux_cookies": _genarate_nix_paths_chromium(
+            "linux_cookies": _generate_nix_paths_chromium(
                 [
                     "~/.config/microsoft-edge{channel}/Default/Cookies",
                     "~/.config/microsoft-edge{channel}/Profile */Cookies",
@@ -844,7 +835,7 @@ class Edge(ChromiumBased):
                 ],
                 channel=["", "-beta", "-dev"],
             ),
-            "windows_cookies": _genarate_win_paths_chromium(
+            "windows_cookies": _generate_win_paths_chromium(
                 [
                     "Microsoft\\Edge{channel}\\User Data\\Default\\Cookies",
                     "Microsoft\\Edge{channel}\\User Data\\Default\\Network\\Cookies",
@@ -853,14 +844,14 @@ class Edge(ChromiumBased):
                 ],
                 channel=["", " Beta", " Dev", " SxS"],
             ),
-            "osx_cookies": _genarate_nix_paths_chromium(
+            "osx_cookies": _generate_nix_paths_chromium(
                 [
                     "~/Library/Application Support/Microsoft Edge{channel}/Default/Cookies",
                     "~/Library/Application Support/Microsoft Edge{channel}/Profile */Cookies",
                 ],
                 channel=["", " Beta", " Dev", " Canary"],
             ),
-            "windows_keys": _genarate_win_paths_chromium(
+            "windows_keys": _generate_win_paths_chromium(
                 "Microsoft\\Edge{channel}\\User Data\\Local State", channel=["", " Beta", " Dev", " SxS"]
             ),
             "os_crypt_name": "chromium",
@@ -888,7 +879,7 @@ class Vivaldi(ChromiumBased):
                 "~/.var/app/com.vivaldi.Vivaldi/config/vivaldi/Default/Cookies",
                 "~/.var/app/com.vivaldi.Vivaldi/config/vivaldi/Profile */Cookies",
             ],
-            "windows_cookies": _genarate_win_paths_chromium(
+            "windows_cookies": _generate_win_paths_chromium(
                 [
                     "Vivaldi\\User Data\\Default\\Cookies",
                     "Vivaldi\\User Data\\Default\\Network\\Cookies",
@@ -900,7 +891,7 @@ class Vivaldi(ChromiumBased):
                 "~/Library/Application Support/Vivaldi/Default/Cookies",
                 "~/Library/Application Support/Vivaldi/Profile */Cookies",
             ],
-            "windows_keys": _genarate_win_paths_chromium("Vivaldi\\User Data\\Local State"),
+            "windows_keys": _generate_win_paths_chromium("Vivaldi\\User Data\\Local State"),
             "os_crypt_name": "chrome",
             "osx_key_service": "Vivaldi Safe Storage",
             "osx_key_user": "Vivaldi",
@@ -960,7 +951,7 @@ class FirefoxBased:
             # the Install section has no relative/absolute info, so check the profiles
             if config[section].get("Path") == profile_path:
                 absolute = config[section].get("IsRelative") == "0"
-                return profile_path if absolute else os.path.join(os.path.dirname(profiles_ini_path), profile_path)  # type: ignore # noqa
+                return profile_path if absolute else os.path.join(os.path.dirname(profiles_ini_path), profile_path)  # type: ignore
 
         return fallback_path
 
@@ -974,7 +965,7 @@ class FirefoxBased:
                 expanded = _expand_win_path(path)
             else:
                 expanded = os.path.expanduser(path)
-            if os.path.isdir(expanded):  # noqa: PTH112
+            if os.path.isdir(expanded):
                 return expanded
         raise BrowserCookieError(f"Could not find {self.browser_name} profile directory")
 
@@ -996,7 +987,7 @@ class FirefoxBased:
         assert data_dirs is not None
         user_data_path = self.__expand_and_check_path(data_dirs)
         cookie_files: list[str] = (
-            glob.glob(os.path.join(FirefoxBased.get_default_profile(user_data_path), "cookies.sqlite")) or []  # noqa: PTH118, PTH207
+            glob.glob(os.path.join(FirefoxBased.get_default_profile(user_data_path), "cookies.sqlite")) or []
         )
         if not cookie_files:
             raise BrowserCookieError(f"Failed to find {self.browser_name} cookie file")
@@ -1052,13 +1043,13 @@ class FirefoxBased:
                 cur.execute(query, (f"%{self.domain_name}%",))
             except sqlite3.DatabaseError as e:
                 if e.args[0].startswith(("no such table: ", "file is not a database")):
-                    raise BrowserCookieError(f"File {self.tmp_cookie_file} is not a Firefox cookie file") from None
+                    raise BrowserCookieError(f"File {self.cookie_file} is not a Firefox cookie file") from None
                 raise
 
             for item in cur.fetchall():
                 host, path, secure, expires, name, value, http_only = item
-                c = create_cookie(host, path, secure, expires, name, value, http_only)
-                cj.set_cookie(c)
+                cookie = create_cookie(host, path, secure, expires, name, value, http_only)
+                cj.set_cookie(cookie)
 
         self.__add_session_cookies(cj)
         self.__add_session_cookies_lz4(cj)
