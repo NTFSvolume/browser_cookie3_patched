@@ -388,6 +388,10 @@ class _Browser(ABC):
     NAME: ClassVar[str] = ""
     SUPPORTED_OPERATING_SYSTEMS: ClassVar[tuple[SupportedOS, ...]] = ()
 
+    LINUX_COOKIE_PATHS: ClassVar[_StrTuple] = ()
+    WINDOWS_COOKIES_PATHS: ClassVar[Union[_StrTuple, tuple[_WinEnvPath]]] = ()
+    OSX_COOKIE_PATHS: ClassVar[_StrTuple] = ()
+
     def __init__(
         self,
         cookie_file: Optional[str] = None,  # path to plain text file or sqlite database, depends on the browser
@@ -450,22 +454,20 @@ class _Browser(ABC):
 
 
 class _SimpleBrowser(_Browser):
-    """Simple abstract browser that does just sets the default cookie file in _post_init"""
+    """Simple abstract browser that just sets the default cookie file in _post_init"""
 
     def _post_init(self) -> None:  # Makes overriding _post_init optional
         self._set_actual_cookie_file_to_use()
 
-    @abstractmethod
-    def load(self): ...
-
-
-class _LinuxOnlySimpleBrowser(_SimpleBrowser):
-    SUPPORTED_OPERATING_SYSTEMS = ("linux",)
-    LINUX_COOKIE_PATHS: ClassVar[_StrTuple] = ()
-
     def _get_default_cookie_file_for(self, os_name: SupportedOS) -> Optional[_ExpandedPath]:
+        if os_name not in self.SUPPORTED_OPERATING_SYSTEMS:
+            return
+        if os_name == "osx":
+            return _expand_paths(os_name, *self.OSX_COOKIE_PATHS)
         if os_name == "linux":
             return _expand_paths(os_name, *self.LINUX_COOKIE_PATHS)
+        if os_name == "windows":
+            return _expand_paths(os_name, *self.WINDOWS_COOKIES_PATHS)
 
     @abstractmethod
     def load(self): ...
@@ -1180,10 +1182,11 @@ class Safari(_Browser):
         return cj
 
 
-class Lynx(_LinuxOnlySimpleBrowser):
+class Lynx(_SimpleBrowser):
     """Class for Lynx"""
 
     NAME = "Lynx"
+    SUPPORTED_OPERATING_SYSTEMS = ("linux",)
     LINUX_COOKIE_PATHS: ClassVar[_StrTuple] = (
         "~/.lynx_cookies",  # most systems, see lynx man page
         "~/cookies",  # MS-DOS
@@ -1210,10 +1213,11 @@ class Lynx(_LinuxOnlySimpleBrowser):
         return cookie_jar
 
 
-class W3m(_LinuxOnlySimpleBrowser):
+class W3m(_SimpleBrowser):
     """Class for W3m"""
 
     NAME = "W3m"
+    SUPPORTED_OPERATING_SYSTEMS = ("linux",)
     # see documentation in source code of w3m, file fm.h
     COO_USE: ClassVar[int] = 1
     COO_SECURE: ClassVar[int] = 2
