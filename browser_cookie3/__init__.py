@@ -450,31 +450,18 @@ class _Browser(ABC):
 
 
 class _SimpleBrowser(_Browser):
-    """Simple abstract browser that does just sets the default cookies in _post_init"""
+    """Simple abstract browser that does just sets the default cookie file in _post_init"""
 
-    def _post_init(self) -> None:  # Make overriding _post_init optional
+    def _post_init(self) -> None:  # Makes overriding _post_init optional
         self._set_actual_cookie_file_to_use()
 
     @abstractmethod
     def load(self): ...
 
 
-class _DisableOSOverrides:
-    SUPPORTED_OPERATING_SYSTEMS: ClassVar[_StrTuple] = ()
-    _CORE_BROWSER_NAME: ClassVar[str] = ""
-    _CORE_SUPPORTED_BROWSERS: ClassVar[_StrTuple] = ()
-
-    def __init__(self, *args, **kwargs):
-        overriden = self.SUPPORTED_OPERATING_SYSTEMS == self._CORE_SUPPORTED_BROWSERS
-        assert not overriden, f"Do not override supported browser for class {self._CORE_BROWSER_NAME}"
-
-
-class _LinuxOnlySimpleBrowser(_SimpleBrowser, _DisableOSOverrides):
+class _LinuxOnlySimpleBrowser(_SimpleBrowser):
     SUPPORTED_OPERATING_SYSTEMS = ("linux",)
     LINUX_COOKIE_PATHS: ClassVar[_StrTuple] = ()
-
-    _CORE_BROWSER_NAME = "_LinuxOnlySimpleBrowser"
-    _CORE_SUPPORTED_BROWSERS = ("linux",)
 
     def _get_default_cookie_file_for(self, os_name: SupportedOS) -> Optional[_ExpandedPath]:
         if os_name == "linux":
