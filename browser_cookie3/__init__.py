@@ -20,18 +20,23 @@ from io import BufferedReader, BytesIO
 from pathlib import Path
 from typing import Any, ClassVar, Optional, TypedDict, Union
 
+shadowcopy = None
+IS_LINUX = IS_WINDOWS = IS_MACOS = False
 if sys.platform.startswith("linux") or "bsd" in sys.platform.lower():
+    IS_LINUX = True
     import jeepney
     from jeepney.io.blocking import open_dbus_connection
 
-    USE_DBUS_LINUX = False
-
-shadowcopy = None
-if sys.platform == "win32":
+elif sys.platform == "win32":
+    IS_WINDOWS = True
     try:
         import shadowcopy
     except ImportError:
         pass
+elif sys.platform == "darwin":
+    IS_MACOS = True
+
+IS_SUPPORTED_OS = any((IS_WINDOWS, IS_LINUX, IS_MACOS))
 
 
 # external dependencies
@@ -239,17 +244,11 @@ class _LinuxPasswordManager:
 
     _APP_ID = "browser-cookie3"
 
-    def __init__(self, use_dbus: bool):
-        if use_dbus:
-            self.__methods_map: dict[str, Callable[..., bytes]] = {
-                "kwallet": self.__get_kdewallet_password_dbus,
-                "secretstorage": self.__get_secretstorage_item_dbus,
-            }
-        else:
-            self.__methods_map = {
-                "kwallet": self.__get_kdewallet_password_jeepney,
-                "secretstorage": self.__get_secretstorage_item_jeepney,
-            }
+    def __init__(self):
+        self.__methods_map: dict[str, Callable[..., bytes]] = {
+            "kwallet": self.__get_kdewallet_password_jeepney,
+            "secretstorage": self.__get_secretstorage_item_jeepney,
+        }
 
     def get_password(self, os_crypt_name: str) -> bytes:
         try:
@@ -271,43 +270,6 @@ class _LinuxPasswordManager:
             except RuntimeError:
                 pass
         raise RuntimeError(f"Can not find secret for {os_crypt_name}")
-
-    def __get_secretstorage_item_dbus(self, schema: str, application: str) -> bytes:
-        with contextlib.closing(dbus.SessionBus()) as connection:
-            try:
-                secret_service = dbus.Interface(
-                    connection.get_object("org.freedesktop.secrets", "/org/freedesktop/secrets", False),
-                    "org.freedesktop.Secret.Service",
-                )
-            except dbus.exceptions.DBusException:
-                raise RuntimeError("The name org.freedesktop.secrets was not provided by any .service files") from None
-            object_path_1 = secret_service.SearchItems({"xdg:schema": schema, "application": application})
-            object_path_list = list(filter(lambda x: len(x), object_path_1))
-            if len(object_path_list) == 0:
-                raise RuntimeError(f"Can not find secret for {application}")
-            object_path = object_path_list[0][0]
-
-            secret_service.Unlock([object_path])
-            _, session = secret_service.OpenSession("plain", dbus.String("", variant_level=1))
-            _, _, secret, _ = secret_service.GetSecrets([object_path], session)[object_path]
-            return bytes(secret)
-
-    def __get_kdewallet_password_dbus(self, os_crypt_name: str) -> bytes:
-        folder = f"{os_crypt_name.capitalize()} Keys"
-        key = f"{os_crypt_name.capitalize()} Safe Storage"
-        with contextlib.closing(dbus.SessionBus()) as connection:
-            try:
-                kwalletd5_object = connection.get_object("org.kde.kwalletd5", "/modules/kwalletd5", False)
-            except dbus.exceptions.DBusException:
-                raise RuntimeError("The name org.kde.kwalletd5 was not provided by any .service files") from None
-            kwalletd5 = dbus.Interface(kwalletd5_object, "org.kde.KWallet")
-            handle = kwalletd5.open(kwalletd5.networkWallet(), dbus.Int64(0), self._APP_ID)
-            if not kwalletd5.hasFolder(handle, folder, self._APP_ID):
-                kwalletd5.close(handle, False, self._APP_ID)
-                raise RuntimeError(f"KDE Wallet folder {folder} not found.")
-            password: str = kwalletd5.readPassword(handle, folder, key, self._APP_ID)
-            kwalletd5.close(handle, False, self._APP_ID)
-            return password.encode("utf-8")
 
     def __get_secretstorage_item_jeepney(self, schema: str, application: str) -> bytes:
         args = ["/org/freedesktop/secrets", "org.freedesktop.secrets", "org.freedesktop.Secret.Service"]
@@ -466,7 +428,7 @@ class ChromiumBased:
         elif sys.platform.startswith("linux") or "bsd" in sys.platform.lower():
             assert os_crypt_name is not None
             assert linux_cookies is not None
-            password = _LinuxPasswordManager(USE_DBUS_LINUX).get_password(os_crypt_name)
+            password = _LinuxPasswordManager().get_password(os_crypt_name)
             iterations = 1
             self.v10_key = PBKDF2(CHROMIUM_DEFAULT_PASSWORD, self.salt, self.length, iterations)  # type: ignore
             self.v11_key = PBKDF2(password, self.salt, self.length, iterations)  # type: ignore
