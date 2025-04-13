@@ -41,9 +41,6 @@ elif sys.platform == "darwin":
 else:
     _CURRENT_OS = "unknown"
 
-_IS_SUPPORTED_OS = any((_IS_WINDOWS, _IS_LINUX, _IS_MACOS))
-
-
 # external dependencies
 import lz4.block
 from Cryptodome.Cipher import AES
@@ -58,7 +55,7 @@ CHROMIUM_DEFAULT_PASSWORD = b"peanuts"
 class BrowserCookieError(Exception): ...
 
 
-class DecryptionError(BrowserCookieError): ...
+class CookieDecryptionError(BrowserCookieError): ...
 
 
 class UnsupportedOSError(BrowserCookieError): ...
@@ -623,7 +620,8 @@ class ChromiumBased(_Browser):
             # Fix for change in Chrome 80
             except RuntimeError:  # Failed to decrypt the cipher text with DPAPI
                 if not self.v10_key:
-                    raise RuntimeError("Failed to decrypt the cipher text with DPAPI and no AES key.") from None
+                    msg = "Failed to decrypt the cipher text with DPAPI and no AES key."
+                    raise CookieDecryptionError(msg) from None
                 # Encrypted cookies should be prefixed with 'v10' according to the
                 # Chromium code. Strip it off.
                 encrypted_value = encrypted_value[3:]
@@ -635,7 +633,7 @@ class ChromiumBased(_Browser):
                 try:
                     data = aes.decrypt_and_verify(encrypted_value[12:-16], tag)
                 except ValueError:
-                    raise BrowserCookieError("Unable to get key for cookie decryption") from None
+                    raise CookieDecryptionError("Unable to get key for cookie decryption") from None
                 if has_integrity_check_for_cookie_domain:
                     data = data[32:]
                 return data.decode()
@@ -665,7 +663,7 @@ class ChromiumBased(_Browser):
                 return decrypted.decode("utf-8")
             except ValueError:
                 pass
-        raise BrowserCookieError("Unable to get key for cookie decryption")
+        raise CookieDecryptionError("Unable to get key for cookie decryption")
 
 
 class Chrome(ChromiumBased):
@@ -1178,15 +1176,13 @@ class _LinuxOnlyBrowser(_Browser):
     LINUX_COOKIE_PATHS: ClassVar[StrTuple] = ()
 
     def _post_init(self):
-        assert self.SUPPORTED_OPERATING_SYSTEMS == ("linux",), "Do not override supported browser for this class"
+        assert self.SUPPORTED_OPERATING_SYSTEMS == ("linux",), "Do not override supported browsers for this class"
         cookie_file = self.cookie_file or self._get_default_cookie_file_for("linux")
         if not cookie_file:
             raise BrowserCookieError(f"Cannot find {self.NAME} cookie file")
         self.cookie_file = cookie_file
 
     def _get_default_cookie_file_for(self, os_name: str) -> Optional[ExpandedPath]:
-        if self.cookie_file:
-            return self.cookie_file
         if os_name == "linux":
             return _expand_paths(os_name, *self.LINUX_COOKIE_PATHS)
 
@@ -1205,8 +1201,7 @@ class Lynx(_LinuxOnlyBrowser):
 
     def load(self) -> http.cookiejar.CookieJar:
         cookie_jar = http.cookiejar.CookieJar()
-        if not self.cookie_file:
-            raise BrowserCookieError("Cannot find Lynx cookie file")
+        assert self.cookie_file is not None
         with Path(self.cookie_file).open() as f:
             for line in f.read().splitlines():
                 # documentation in source code of lynx, file src/LYCookie.c
