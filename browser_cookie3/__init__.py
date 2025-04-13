@@ -1,5 +1,5 @@
 import importlib.metadata
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator
 from pathlib import Path
 
 __version__ = importlib.metadata.version("browser_cookie3")
@@ -18,7 +18,7 @@ import sys
 import tempfile
 from abc import ABC, abstractmethod
 from io import BufferedReader, BytesIO
-from typing import Any, ClassVar, Literal, NewType, Optional, TypedDict, Union, get_args
+from typing import Any, ClassVar, Literal, NewType, Optional, TypedDict, TypeVar, Union, get_args
 
 shadowcopy = None
 _IS_LINUX = _IS_WINDOWS = _IS_MACOS = False
@@ -62,10 +62,14 @@ class UnsupportedOSError(BrowserCookieError): ...
 
 
 SupportedOS = Literal["windows", "osx", "linux"]
+_T = TypeVar("_T")
 _CookieExtractor = Callable[..., http.cookiejar.CookieJar]
 _ExpandedPath = NewType("_ExpandedPath", str)
 _StrTuple = tuple[str, ...]
-_DictCookies = dict[str, list[dict[str, Any]]]
+_StrDict = dict[str, _T]
+_DictCookies = _StrDict[Any]
+_Json = _StrDict[list[_T]]
+_NestedJson = _Json[_Json[_T]]
 
 _NEW_ISSUE_URL = "https://github.com/NTFSvolume/browser_cookie3_patched/issues/new"
 
@@ -177,20 +181,12 @@ def _expand_paths(os_name: SupportedOS, *paths: Union[_WinEnvPath, str]) -> Opti
     return next(_expand_paths_impl(os_name, *paths), None)
 
 
-def _normalize_paths_chromium(
-    paths: Union[Iterable[str], str], channels: Optional[Union[Iterable[str], str]] = None
-) -> tuple[_StrTuple, _StrTuple]:
+def _normalize_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple] = None) -> tuple[_StrTuple, _StrTuple]:
     channels = channels or ("",)
-    if isinstance(channels, str):
-        channels = (channels,)
-    if isinstance(paths, str):
-        paths = (paths,)
-    return tuple(paths), tuple(channels)
+    return paths, channels
 
 
-def _generate_nix_paths_chromium(
-    paths: Union[Iterable[str], str], channels: Optional[Union[Iterable[str], str]] = None
-) -> list[str]:
+def _generate_nix_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple] = None) -> list[str]:
     """Generate paths for chromium based browsers on *nix systems."""
 
     paths, channels = _normalize_paths_chromium(paths, channels)
@@ -201,9 +197,7 @@ def _generate_nix_paths_chromium(
     return generated_paths
 
 
-def _generate_win_paths_chromium(
-    paths: Union[Iterable[str], str], channels: Optional[Union[Iterable[str], str]] = None
-) -> list[_WinEnvPath]:
+def _generate_win_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple] = None) -> list[_WinEnvPath]:
     """Generate paths for chromium based browsers on windows"""
 
     paths, channels = _normalize_paths_chromium(paths, channels)
@@ -975,7 +969,7 @@ class FirefoxBased(_Browser):
                 return _ExpandedPath(cookie_files[0])
 
     @staticmethod
-    def __create_session_cookie(cookie_json: dict[str, Any]) -> http.cookiejar.Cookie:
+    def __create_session_cookie(cookie_json: _DictCookies) -> http.cookiejar.Cookie:
         return create_cookie(
             cookie_json.get("host", ""),
             cookie_json.get("path", ""),
@@ -991,12 +985,12 @@ class FirefoxBased(_Browser):
             return
         try:
             with Path(self.session_file).open("rb") as file_obj:
-                json_data: dict[str, list[_DictCookies]] = json.load(file_obj)
+                json_data: _NestedJson[_DictCookies] = json.load(file_obj)
         except ValueError as e:
             print(f"Error parsing {self.NAME} session JSON: {e}")  # noqa: T201
         else:
-            for window in json_data.get("windows", {}):
-                for cookie in window.get("cookies", {}):
+            for window in json_data.get("windows", []):
+                for cookie in window.get("cookies", []):
                     if self.domain_name == "" or self.domain_name in cookie.get("host", ""):
                         cj.set_cookie(self.__create_session_cookie(cookie))
 
@@ -1006,11 +1000,11 @@ class FirefoxBased(_Browser):
         try:
             with Path(self.session_file_lz4).open("rb") as file_obj:
                 file_obj.read(8)
-                json_data: _DictCookies = json.loads(lz4.block.decompress(file_obj.read()))
+                json_data: _Json[_DictCookies] = json.loads(lz4.block.decompress(file_obj.read()))
         except ValueError as e:
             print(f"Error parsing {self.NAME} session JSON LZ4: {e}")  # noqa: T201
         else:
-            for cookie in json_data.get("cookies", {}):
+            for cookie in json_data.get("cookies", []):
                 if self.domain_name == "" or self.domain_name in cookie.get("host", ""):
                     cj.set_cookie(self.__create_session_cookie(cookie))
 
