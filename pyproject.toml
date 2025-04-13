@@ -60,7 +60,6 @@ select = [
     "I",  # isort
     "N",  # PEP8 naming conventions
     "PLR1716",  # boolean chained comparison
-    "PTH",  # use pathlib instead of os
     "Q",  # flake8-quotes
     "RUF",  # RUF specific fixes
     "T20",  # flake8-print
