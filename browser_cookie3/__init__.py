@@ -449,22 +449,32 @@ class _Browser(ABC):
         self.cookie_file = cookie_file
 
 
-class _LinuxOnlyBrowser(_Browser):
+class _SimpleBrowser(_Browser):
+    """Simple abstract browser that does just sets the default cookies in _post_init"""
+
+    def _post_init(self) -> None:  # Make overriding _post_init optional
+        self._set_actual_cookie_file_to_use()
+
+    @abstractmethod
+    def load(self): ...
+
+
+class _DisableOSOverrides:
+    SUPPORTED_OPERATING_SYSTEMS: ClassVar[_StrTuple] = ()
+    _CORE_BROWSER_NAME: ClassVar[str] = ""
+    _CORE_SUPPORTED_BROWSERS: ClassVar[_StrTuple] = ()
+
+    def __init__(self, *args, **kwargs):
+        overriden = self.SUPPORTED_OPERATING_SYSTEMS == self._CORE_SUPPORTED_BROWSERS
+        assert not overriden, f"Do not override supported browser for class {self._CORE_BROWSER_NAME}"
+
+
+class _LinuxOnlySimpleBrowser(_SimpleBrowser, _DisableOSOverrides):
     SUPPORTED_OPERATING_SYSTEMS = ("linux",)
     LINUX_COOKIE_PATHS: ClassVar[_StrTuple] = ()
 
-    def __init__(
-        self,
-        cookie_file: Optional[str] = None,  # path to plain text file or sqlite database, depends on the browser
-        domain_name: Optional[str] = None,
-        key_file: Optional[str] = None,
-    ):
-        assert self.SUPPORTED_OPERATING_SYSTEMS == ("linux",), "Do not override supported browsers for this class"
-        super().__init__(cookie_file, domain_name, key_file)
-        self._set_actual_cookie_file_to_use()
-
-    def _post_init(self) -> None:  # Make overriding _post_init optional
-        return
+    _CORE_BROWSER_NAME = "_LinuxOnlySimpleBrowser"
+    _CORE_SUPPORTED_BROWSERS = ("linux",)
 
     def _get_default_cookie_file_for(self, os_name: SupportedOS) -> Optional[_ExpandedPath]:
         if os_name == "linux":
@@ -1183,7 +1193,7 @@ class Safari(_Browser):
         return cj
 
 
-class Lynx(_LinuxOnlyBrowser):
+class Lynx(_LinuxOnlySimpleBrowser):
     """Class for Lynx"""
 
     NAME = "Lynx"
@@ -1213,7 +1223,7 @@ class Lynx(_LinuxOnlyBrowser):
         return cookie_jar
 
 
-class W3m(_LinuxOnlyBrowser):
+class W3m(_LinuxOnlySimpleBrowser):
     """Class for W3m"""
 
     NAME = "W3m"
