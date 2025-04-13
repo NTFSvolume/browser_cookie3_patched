@@ -73,10 +73,8 @@ _NestedJson = _Json[_Json[_T]]
 
 _NEW_ISSUE_URL = "https://github.com/NTFSvolume/browser_cookie3_patched/issues/new"
 
-_WinPath = tuple[str, str]
 
-
-class _NamedWinPath(NamedTuple):
+class _WinPath(NamedTuple):
     env: str
     path: str
 
@@ -155,8 +153,7 @@ def _get_osx_keychain_password(osx_key_service: str, osx_key_user: str) -> bytes
 
 def _expand_win_path(path: Union[_WinPath, str]) -> _ExpandedPath:
     if not isinstance(path, tuple):
-        path = ("APPDATA", path)
-    path = _NamedWinPath(*path)
+        path = _WinPath("APPDATA", path)
     app_data = os.getenv(path.env, "")
     return _ExpandedPath(os.path.join(app_data, path.path))
 
@@ -164,13 +161,13 @@ def _expand_win_path(path: Union[_WinPath, str]) -> _ExpandedPath:
 def _expand_paths_impl(os_name: SupportedOS, *paths: Union[_WinPath, str]) -> Generator[_ExpandedPath]:
     """Expands user paths on Linux, OSX, and windows"""
     assert os_name in get_args(SupportedOS)
-    if len(paths) == 0:
+    if not paths:
         return
 
     if os_name == "windows":
         expand: Callable[..., Union[bytes, str]] = _expand_win_path
     else:
-        assert not any(isinstance(p, dict) for p in paths), "Windows only paths are not supported in this platform"
+        assert not any(isinstance(p, _WinPath) for p in paths), "Windows paths are not supported in this platform"
         expand = os.path.expanduser
 
     for path in map(expand, paths):  # type: ignore
@@ -200,17 +197,17 @@ def _generate_nix_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple]
     return generated_paths
 
 
-def _generate_win_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple] = None) -> list[_NamedWinPath]:
+def _generate_win_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple] = None) -> list[_WinPath]:
     """Generate paths for chromium based browsers on windows"""
 
     paths, channels = _normalize_paths_chromium(paths, channels)
-    generated_paths: list[_NamedWinPath] = []
+    generated_paths: list[_WinPath] = []
     for chan in channels:
         for path in paths:
             full_path = path.format(channel=chan)
-            generated_paths.append(_NamedWinPath("APPDATA", "..\\Local\\" + full_path))
-            generated_paths.append(_NamedWinPath("LOCALAPPDATA", full_path))
-            generated_paths.append(_NamedWinPath("APPDATA", full_path))
+            generated_paths.append(_WinPath("APPDATA", "..\\Local\\" + full_path))
+            generated_paths.append(_WinPath("LOCALAPPDATA", full_path))
+            generated_paths.append(_WinPath("APPDATA", full_path))
     return generated_paths
 
 
@@ -1041,10 +1038,13 @@ class Firefox(FirefoxBased):
     """Class for Firefox"""
 
     NAME = "Firefox"
-    LINUX_DATA_DIRS = ("~/snap/firefox/common/.mozilla/firefox", "~/.mozilla/firefox")
+    LINUX_DATA_DIRS = (
+        "~/snap/firefox/common/.mozilla/firefox",
+        "~/.mozilla/firefox",
+    )
     WINDOWS_DATA_DIRS = (
-        ("APPDATA", r"Mozilla\Firefox"),
-        ("LOCALAPPDATA", r"Mozilla\Firefox"),
+        _WinPath("APPDATA", r"Mozilla\Firefox"),
+        _WinPath("LOCALAPPDATA", r"Mozilla\Firefox"),
     )
     OSX_DATA_DIRS = ("~/Library/Application Support/Firefox",)
 
@@ -1058,8 +1058,8 @@ class LibreWolf(FirefoxBased):
         "~/.librewolf",
     )
     WINDOWS_DATA_DIRS = (
-        ("APPDATA", "librewolf"),
-        ("LOCALAPPDATA", "librewolf"),
+        _WinPath("APPDATA", "librewolf"),
+        _WinPath("LOCALAPPDATA", "librewolf"),
     )
     OS_DATA_DIRS = ("~/Library/Application Support/librewolf",)
 
