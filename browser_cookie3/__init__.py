@@ -18,7 +18,7 @@ import sys
 import tempfile
 from abc import ABC, abstractmethod
 from io import BufferedReader, BytesIO
-from typing import Any, ClassVar, Literal, NewType, Optional, TypedDict, TypeVar, Union, get_args
+from typing import Any, ClassVar, Literal, NamedTuple, NewType, Optional, TypeVar, Union, get_args
 
 shadowcopy = None
 _IS_LINUX = _IS_WINDOWS = _IS_MACOS = False
@@ -73,10 +73,12 @@ _NestedJson = _Json[_Json[_T]]
 
 _NEW_ISSUE_URL = "https://github.com/NTFSvolume/browser_cookie3_patched/issues/new"
 
+_WinPath = tuple[str, str]
 
-class _WinEnvPath(TypedDict):
-    path: str
+
+class _NamedWinPath(NamedTuple):
     env: str
+    path: str
 
 
 def _ExpandedOrNone(path: Optional[str]) -> Optional[_ExpandedPath]:  # noqa: N802
@@ -151,14 +153,15 @@ def _get_osx_keychain_password(osx_key_service: str, osx_key_user: str) -> bytes
     return out.strip()
 
 
-def _expand_win_path(path: Union[_WinEnvPath, str]) -> _ExpandedPath:
-    if not isinstance(path, dict):
-        path = {"path": path, "env": "APPDATA"}
-    app_data = os.getenv(path["env"], "")
-    return _ExpandedPath(os.path.join(app_data, path["path"]))
+def _expand_win_path(path: Union[_WinPath, str]) -> _ExpandedPath:
+    if not isinstance(path, tuple):
+        path = ("APPDATA", path)
+    path = _NamedWinPath(*path)
+    app_data = os.getenv(path.env, "")
+    return _ExpandedPath(os.path.join(app_data, path.path))
 
 
-def _expand_paths_impl(os_name: SupportedOS, *paths: Union[_WinEnvPath, str]) -> Generator[_ExpandedPath]:
+def _expand_paths_impl(os_name: SupportedOS, *paths: Union[_WinPath, str]) -> Generator[_ExpandedPath]:
     """Expands user paths on Linux, OSX, and windows"""
     assert os_name in get_args(SupportedOS)
     if len(paths) == 0:
@@ -177,7 +180,7 @@ def _expand_paths_impl(os_name: SupportedOS, *paths: Union[_WinEnvPath, str]) ->
         yield from sorted(_ExpandedPath(child) for child in glob.iglob(path))
 
 
-def _expand_paths(os_name: SupportedOS, *paths: Union[_WinEnvPath, str]) -> Optional[_ExpandedPath]:
+def _expand_paths(os_name: SupportedOS, *paths: Union[_WinPath, str]) -> Optional[_ExpandedPath]:
     return next(_expand_paths_impl(os_name, *paths), None)
 
 
@@ -197,16 +200,17 @@ def _generate_nix_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple]
     return generated_paths
 
 
-def _generate_win_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple] = None) -> list[_WinEnvPath]:
+def _generate_win_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple] = None) -> list[_NamedWinPath]:
     """Generate paths for chromium based browsers on windows"""
 
     paths, channels = _normalize_paths_chromium(paths, channels)
-    generated_paths: list[_WinEnvPath] = []
+    generated_paths: list[_NamedWinPath] = []
     for chan in channels:
         for path in paths:
-            generated_paths.append({"env": "APPDATA", "path": "..\\Local\\" + path.format(channel=chan)})
-            generated_paths.append({"env": "LOCALAPPDATA", "path": path.format(channel=chan)})
-            generated_paths.append({"env": "APPDATA", "path": path.format(channel=chan)})
+            full_path = path.format(channel=chan)
+            generated_paths.append(_NamedWinPath("APPDATA", "..\\Local\\" + full_path))
+            generated_paths.append(_NamedWinPath("LOCALAPPDATA", full_path))
+            generated_paths.append(_NamedWinPath("APPDATA", full_path))
     return generated_paths
 
 
@@ -383,7 +387,7 @@ class _Browser(ABC):
     SUPPORTED_OPERATING_SYSTEMS: ClassVar[tuple[SupportedOS, ...]] = ()
 
     LINUX_COOKIE_PATHS: ClassVar[_StrTuple] = ()
-    WINDOWS_COOKIES_PATHS: ClassVar[Union[_StrTuple, tuple[_WinEnvPath]]] = ()
+    WINDOWS_COOKIES_PATHS: ClassVar[Union[_StrTuple, tuple[_WinPath]]] = ()
     OSX_COOKIE_PATHS: ClassVar[_StrTuple] = ()
 
     def __init__(
@@ -897,7 +901,7 @@ class FirefoxBased(_Browser):
     """Superclass for Firefox based browsers"""
 
     LINUX_DATA_DIRS: ClassVar[_StrTuple] = ()
-    WINDOWS_DATA_DIRS: ClassVar[tuple[_WinEnvPath, ...]] = ()
+    WINDOWS_DATA_DIRS: ClassVar[tuple[_WinPath, ...]] = ()
     OSX_DATA_DIRS: ClassVar[_StrTuple] = ()
 
     def _post_init(self):
@@ -940,10 +944,10 @@ class FirefoxBased(_Browser):
         return fallback_path
 
     @classmethod
-    def __expand_and_check_path(cls, *paths: Union[_WinEnvPath, str]) -> str:
+    def __expand_and_check_path(cls, *paths: Union[_WinPath, str]) -> str:
         """Expands a path to a list of paths and returns the first one that exists"""
         for path in paths:
-            if isinstance(path, dict):
+            if isinstance(path, tuple):
                 expanded = _expand_win_path(path)
             else:
                 expanded = os.path.expanduser(path)
@@ -1039,8 +1043,8 @@ class Firefox(FirefoxBased):
     NAME = "Firefox"
     LINUX_DATA_DIRS = ("~/snap/firefox/common/.mozilla/firefox", "~/.mozilla/firefox")
     WINDOWS_DATA_DIRS = (
-        {"env": "APPDATA", "path": r"Mozilla\Firefox"},
-        {"env": "LOCALAPPDATA", "path": r"Mozilla\Firefox"},
+        ("APPDATA", r"Mozilla\Firefox"),
+        ("LOCALAPPDATA", r"Mozilla\Firefox"),
     )
     OSX_DATA_DIRS = ("~/Library/Application Support/Firefox",)
 
@@ -1054,8 +1058,8 @@ class LibreWolf(FirefoxBased):
         "~/.librewolf",
     )
     WINDOWS_DATA_DIRS = (
-        {"env": "APPDATA", "path": "librewolf"},
-        {"env": "LOCALAPPDATA", "path": "librewolf"},
+        ("APPDATA", "librewolf"),
+        ("LOCALAPPDATA", "librewolf"),
     )
     OS_DATA_DIRS = ("~/Library/Application Support/librewolf",)
 
