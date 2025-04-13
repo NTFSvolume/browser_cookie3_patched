@@ -1305,18 +1305,18 @@ def create_cookie(
 def chrome(
     cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
 ) -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies used by Chrome. Optionally pass in a
-    domain name to only load cookies from the specified domain
-    """
+    """Returns a cookiejar of the cookies and sessions used by Google Chrome.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return Chrome(cookie_file, domain_name, key_file).load()
 
 
 def arc(
     cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
 ) -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies used by Arc. Optionally pass in a
-    domain name to only load cookies from the specified domain
-    """
+    """Returns a cookiejar of the cookies and sessions used by Arc.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return Arc(cookie_file, domain_name, key_file).load()
 
 
@@ -1332,84 +1332,85 @@ def chromium(
 def opera(
     cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
 ) -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies used by Opera. Optionally pass in a
-    domain name to only load cookies from the specified domain
-    """
+    """Returns a cookiejar of the cookies and sessions used by Opera.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return Opera(cookie_file, domain_name, key_file).load()
 
 
 def opera_gx(
     cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
 ) -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies used by Opera GX. Optionally pass in a
-    domain name to only load cookies from the specified domain
-    """
+    """Returns a cookiejar of the cookies and sessions used by Opera GX.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return OperaGX(cookie_file, domain_name, key_file).load()
 
 
 def brave(
     cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
 ) -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies and sessions used by Brave. Optionally
-    pass in a domain name to only load cookies from the specified domain
-    """
+    """Returns a cookiejar of the cookies and sessions used by Brave.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return Brave(cookie_file, domain_name, key_file).load()
 
 
 def edge(
     cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
 ) -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies used by Microsoft Edge. Optionally pass in a
-    domain name to only load cookies from the specified domain
-    """
+    """Returns a cookiejar of the cookies and sessions used by Microsoft Edge.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return Edge(cookie_file, domain_name, key_file).load()
 
 
 def vivaldi(
     cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
 ) -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies used by Vivaldi Browser. Optionally pass in a
-    domain name to only load cookies from the specified domain
-    """
+    """Returns a cookiejar of the cookies and sessions used by Vivaldi.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return Vivaldi(cookie_file, domain_name, key_file).load()
 
 
 def firefox(
     cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
 ) -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies and sessions used by Firefox. Optionally
-    pass in a domain name to only load cookies from the specified domain
-    """
+    """Returns a cookiejar of the cookies and sessions used by Firefox.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return Firefox(cookie_file, domain_name, key_file).load()
 
 
 def librewolf(
     cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
 ) -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies and sessions used by LibreWolf. Optionally
-    pass in a domain name to only load cookies from the specified domain
-    """
+    """Returns a cookiejar of the cookies and sessions used by LibreWolf.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return LibreWolf(cookie_file, domain_name, key_file).load()
 
 
 def safari(cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None):
-    """Returns a cookiejar of the cookies and sessions used by Safari. Optionally
-    pass in a domain name to only load cookies from the specified domain
-    """
+    """Returns a cookiejar of the cookies and sessions used by Safari.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return Safari(cookie_file, domain_name).load()
 
 
 def lynx(cookie_file: Optional[str] = None, domain_name: str = "") -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies and sessions used by Lynx. Optionally
-    pass in a domain name to only load cookies from the specified domain
+    """Returns a cookiejar of the cookies and sessions used by Lynx.
+
+    Optionally pass in a domain name to only load cookies from the specified domain
     """
     return Lynx(cookie_file, domain_name).load()
 
 
-def w3m(cookie_file=None, domain_name: str = "") -> http.cookiejar.CookieJar:
-    """Returns a cookiejar of the cookies and sessions used by W3m. Optionally
-    pass in a domain name to only load cookies from the specified domain
-    """
+def w3m(cookie_file: Optional[str] = None, domain_name: str = "") -> http.cookiejar.CookieJar:
+    """Returns a cookiejar of the cookies and sessions used by W3m.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     return W3m(cookie_file, domain_name).load()
 
 
