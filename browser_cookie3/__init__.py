@@ -380,16 +380,20 @@ def _ExpandedOrNone(path: Optional[str]) -> Optional[ExpandedPath]:  # noqa: N80
 
 
 class _Browser(ABC):
-    """Base class of all browsers"""
+    """Base class of all browsers
+
+    Appart for the abstract methods, all subclasses most override NAME and SUPPORTED_OPERATING_SYSTEMS
+
+    DO NOT Override __init__ in subclasses. Define custom logic for the browser in the `_post_init` method"""
 
     NAME: ClassVar[str] = ""
     SUPPORTED_OPERATING_SYSTEMS: ClassVar[tuple[SupportedOS, ...]] = ()
-    LINUX_COOKIE_PATHS: ClassVar[StrTuple] = ()
-    WINDOWS_COOKIES_PATHS: ClassVar[StrTuple] = ()
-    OSX_COOKIE_PATHS: ClassVar[StrTuple] = ()
 
     def __init__(
-        self, cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
+        self,
+        cookie_file: Optional[str] = None,  # path to plain text file or sqlite database, depends on the browser
+        domain_name: Optional[str] = None,
+        key_file: Optional[str] = None,
     ) -> None:
         assert self.NAME, "Subclasses must define a NAME"
         assert self.SUPPORTED_OPERATING_SYSTEMS, "Subclasses must define at least 1 supported OS"
@@ -398,8 +402,11 @@ class _Browser(ABC):
             raise UnsupportedOSError(msg)
         self.cookie_file: Optional[ExpandedPath] = _ExpandedOrNone(cookie_file)
         self.key_file: Optional[ExpandedPath] = _ExpandedOrNone(key_file)
-        self.domain_name: str = domain_name
-        self._post_init(cookie_file, domain_name, key_file)
+        self.domain_name: str = domain_name or ""
+        self._post_init()
+
+    def __str__(self) -> str:
+        return self.NAME
 
     @classmethod
     def is_supported(cls) -> bool:
@@ -419,27 +426,24 @@ class _Browser(ABC):
     def supports_osx(cls) -> bool:
         return "osx" in cls.SUPPORTED_OPERATING_SYSTEMS
 
-    @classmethod
-    def _get_default_cookies_paths(cls) -> StrTuple:
-        """Get the default cookies paths for the current OS"""
-        if _IS_WINDOWS:
-            return cls.WINDOWS_COOKIES_PATHS
-        if _IS_LINUX:
-            return cls.LINUX_COOKIE_PATHS
-        if _IS_MACOS:
-            return cls.OSX_COOKIE_PATHS
-        return ()
-
     @abstractmethod
     def load(self) -> http.cookiejar.CookieJar: ...
 
     @abstractmethod
-    def _post_init(
-        self, cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
-    ) -> None: ...
+    def _post_init(self) -> None: ...
 
-    def __str__(self) -> str:
-        return self.NAME
+    @abstractmethod
+    def _get_default_cookie_file_for(self, os_name: SupportedOS) -> Optional[ExpandedPath]: ...
+
+    def _find_default_cookie_file(
+        self,
+    ) -> Optional[ExpandedPath]:
+        if _IS_MACOS:
+            return self._get_default_cookie_file_for("osx")
+        elif _IS_LINUX:
+            return self._get_default_cookie_file_for("linux")
+        elif _IS_WINDOWS:
+            return self._get_default_cookie_file_for("windows")
 
 
 class ChromiumBased(_Browser):
@@ -447,6 +451,10 @@ class ChromiumBased(_Browser):
 
     SUPPORTED_OPERATING_SYSTEMS: ClassVar[tuple[SupportedOS, ...]] = ("windows", "osx", "linux")
     UNIX_TO_NT_EPOCH_OFFSET: ClassVar[int] = 11644473600  # seconds from 1601-01-01T00:00:00Z to 1970-01-01T00:00:00Z
+
+    LINUX_COOKIE_PATHS: ClassVar[StrTuple] = ()
+    WINDOWS_COOKIES_PATHS: ClassVar[StrTuple] = ()
+    OSX_COOKIE_PATHS: ClassVar[StrTuple] = ()
 
     LINUX_CHANNELS: ClassVar[StrTuple] = ("",)
     LINUX_OS_CRYPT_NAME: ClassVar[str] = ""
@@ -458,43 +466,47 @@ class ChromiumBased(_Browser):
     OSX_KEY_SERVICE: ClassVar[str] = ""
     OSX_KEY_USER: ClassVar[str] = ""
 
-    def _post_init(self, cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None):
+    def _post_init(self):
         self.salt = b"saltysalt"
         self.iv = b" " * 16
         self.length = 16
-        self.cookie_file: Optional[ExpandedPath] = ExpandedPath(cookie_file) if cookie_file else None
-        self.domain_name = domain_name
-        self.key_file = _ExpandedOrNone(key_file)
         self.v10_key: Optional[bytes] = None
-        osx_cookies = _generate_nix_paths_chromium(self.OSX_COOKIE_PATHS, self.OSX_CHANNELS)
-        linux_cookies = _generate_nix_paths_chromium(self.LINUX_COOKIE_PATHS, self.LINUX_CHANNELS)
-        windows_cookies = _generate_win_paths_chromium(self.WINDOWS_COOKIES_PATHS, self.WINDOWS_CHANNELS)
-        windows_keys = _generate_win_paths_chromium(self.WINDOWS_KEYS_PATHS, self.WINDOWS_CHANNELS)
-        self.__add_key_and_cookie_file(osx_cookies, linux_cookies, windows_cookies, windows_keys)
+        cookie_file = self.cookie_file or self._find_default_cookie_file()
+        if not cookie_file:
+            raise BrowserCookieError(f"Failed to find cookies for {self.NAME} browser")
+        self.cookie_file = cookie_file
+        self.__add_decrypt_keys()
+
+    def _get_default_cookie_file_for(self, os_name: str) -> Optional[ExpandedPath]:
+        if os_name == "osx":
+            osx_cookies = _generate_nix_paths_chromium(self.OSX_COOKIE_PATHS, self.OSX_CHANNELS)
+            return _expand_paths(os_name, *osx_cookies)
+        if os_name == "linux":
+            linux_cookies = _generate_nix_paths_chromium(self.LINUX_COOKIE_PATHS, self.LINUX_CHANNELS)
+            return _expand_paths(os_name, *linux_cookies)
+        if os_name == "windows":
+            if self.NAME.lower() == "chrome" and (group_policy_path := _windows_group_policy_path()):
+                return group_policy_path
+            windows_cookies = _generate_win_paths_chromium(self.WINDOWS_COOKIES_PATHS, self.WINDOWS_CHANNELS)
+            return _expand_paths(os_name, *windows_cookies)
 
     def __get_key_from_password(self, password: Union[bytes, str], iterations: int) -> bytes:
         """Derive one or more keys from a password (or passphrase)."""
         return PBKDF2(password, self.salt, self.length, iterations)  # type: ignore
 
-    def __add_key_and_cookie_file(
-        self,
-        osx_cookies: list[str],
-        linux_cookies: list[str],
-        windows_cookies: list[WinEnvPath],
-        windows_keys: list[WinEnvPath],
-    ):
+    def __add_decrypt_keys(self):
+        assert self.cookie_file is not None
         if _IS_MACOS:
-            assert osx_cookies, "Cookies must be defined to support OSX"
+            assert self.OSX_COOKIE_PATHS, "Cookies must be defined to support OSX"
             assert self.OSX_KEY_SERVICE, "Key service must be defined to support OSX"
             assert self.OSX_KEY_USER, "Key user must be defined to support OSX"
             password = _get_osx_keychain_password(self.OSX_KEY_SERVICE, self.OSX_KEY_USER)
             iterations = 1003  # number of pbkdf2 iterations on mac
             self.v10_key = self.__get_key_from_password(password, iterations)
-            cookie_file = self.cookie_file or _expand_paths("osx", *osx_cookies)
 
         elif _IS_LINUX:
             assert self.LINUX_OS_CRYPT_NAME, "Crypt name must be defined to support Linux"
-            assert linux_cookies, "Cookies must be defined to support Linux"
+            assert self.LINUX_COOKIE_PATHS, "Cookies must be defined to support Linux"
             password = _LinuxPasswordManager().get_password(self.LINUX_OS_CRYPT_NAME)
             iterations = 1
             self.v10_key = self.__get_key_from_password(CHROMIUM_DEFAULT_PASSWORD, iterations)
@@ -504,11 +516,11 @@ class ChromiumBased(_Browser):
             # the key used to encrypt the cookies in some linux systems was empty
             # After the bug was fixed, old cookies are still encrypted with an empty key
             self.v11_empty_key = self.__get_key_from_password(b"", iterations)  # type: ignore
-            cookie_file = self.cookie_file or _expand_paths("linux", *linux_cookies)
 
         else:
-            assert windows_keys, "Windows keys must be defined to support Windows"
-            assert windows_cookies, "Windows cookies must be defined to support Windows"
+            assert self.WINDOWS_KEYS_PATHS, "Windows keys must be defined to support Windows"
+            assert self.WINDOWS_COOKIES_PATHS, "Windows cookies must be defined to support Windows"
+            windows_keys = _generate_win_paths_chromium(self.WINDOWS_KEYS_PATHS, self.WINDOWS_CHANNELS)
             key_file = self.key_file or _expand_paths("windows", *windows_keys)
             if key_file:
                 with Path(key_file).open("rb") as f:
@@ -520,24 +532,6 @@ class ChromiumBased(_Browser):
                     _, v10_key = _crypt_unprotect_data(keydpapi, is_key=True)
                     assert isinstance(v10_key, bytes)
                     self.v10_key = v10_key
-            else:
-                self.v10_key = None
-
-            # get cookie file from APPDATA
-            cookie_file = self.cookie_file
-            if not cookie_file:
-                if self.NAME.lower() == "chrome" and (group_policy_path := _windows_group_policy_path()):
-                    cookie_file = group_policy_path
-                else:
-                    cookie_file = _expand_paths("windows", *windows_cookies)
-
-        if not cookie_file:
-            raise BrowserCookieError(f"Failed to find cookies for {self.NAME} browser")
-
-        self.cookie_file = cookie_file
-
-    def __str__(self) -> str:
-        return self.NAME
 
     def load(self) -> http.cookiejar.CookieJar:
         """Load sqlite cookies into a cookiejar"""
@@ -891,16 +885,17 @@ class FirefoxBased(_Browser):
     WINDOWS_DATA_DIRS: ClassVar[tuple[WinEnvPath, ...]] = ()
     OSX_DATA_DIRS: ClassVar[StrTuple] = ()
 
-    def _post_init(self, cookie_file: Optional[str] = None, domain_name: str = "", *_):
-        self.cookie_file: str = cookie_file or self.__find_cookie_file()
+    def _post_init(self):
+        cookie_file = self.cookie_file or self._find_default_cookie_file()
+        if not cookie_file:
+            raise BrowserCookieError(f"Failed to find {self.NAME} cookie file")
+        self.cookie_file = cookie_file
         # current sessions are saved in sessionstore.js
         cookies_dir = os.path.dirname(self.cookie_file)
         self.session_file: ExpandedPath = ExpandedPath(os.path.join(cookies_dir, "sessionstore.js"))
         self.session_file_lz4: ExpandedPath = ExpandedPath(
             os.path.join(cookies_dir, "sessionstore-backups", "recovery.jsonlz4")
         )
-        # domain name to filter cookies by
-        self.domain_name: str = domain_name
 
     @staticmethod
     def get_default_profile(user_data_path: str) -> str:
@@ -944,23 +939,21 @@ class FirefoxBased(_Browser):
         raise BrowserCookieError(f"Could not find {cls.NAME} profile directory")
 
     @classmethod
-    def __find_cookie_file(
-        cls,
-    ) -> str:
-        if _IS_MACOS:
+    def _get_default_cookie_file_for(cls, os_name: SupportedOS) -> Optional[ExpandedPath]:
+        data_dirs = None
+        if os_name == "osx":
             data_dirs = cls.OSX_DATA_DIRS
-        elif _IS_LINUX:
+        elif os_name == "linux":
             data_dirs = cls.LINUX_DATA_DIRS
-        else:
+        elif os_name == "windows":
             data_dirs = cls.WINDOWS_DATA_DIRS
 
-        assert data_dirs is not None
-        user_data_path = cls.__expand_and_check_path(*data_dirs)
-        profile = cls.get_default_profile(user_data_path)
-        cookie_files: list[str] = glob.glob(os.path.join(profile, "cookies.sqlite")) or []
-        if not cookie_files:
-            raise BrowserCookieError(f"Failed to find {cls.NAME} cookie file")
-        return cookie_files[0]
+        if data_dirs:
+            user_data_path = cls.__expand_and_check_path(*data_dirs)
+            profile = cls.get_default_profile(user_data_path)
+            cookie_files: list[str] = glob.glob(os.path.join(profile, "cookies.sqlite")) or []
+            if cookie_files:
+                return ExpandedPath(cookie_files[0])
 
     @staticmethod
     def __create_session_cookie(cookie_json: dict[str, Any]) -> http.cookiejar.Cookie:
@@ -1005,6 +998,7 @@ class FirefoxBased(_Browser):
     def load(self) -> http.cookiejar.CookieJar:
         cj = http.cookiejar.CookieJar()
         # firefoxbased seems faster with legacy mode
+        assert self.cookie_file is not None
         with _DatabaseConnetion(self.cookie_file, True) as con:
             cur = con.cursor()
             query = "select host, path, isSecure, expiry, name, value, isHttpOnly from moz_cookies where host like ?"
@@ -1074,12 +1068,17 @@ class Safari(_Browser):
         self.__open_file(cookie_file)
         self.__parse_header()
 
+    @classmethod
+    def _get_default_cookie_file_for(cls, os_name: SupportedOS) -> Optional[ExpandedPath]:
+        if os_name == "osx":
+            return _expand_paths("osx", *cls.OSX_COOKIE_PATHS)
+
     def __del__(self) -> None:
         if self.__buffer:
             self.__buffer.close()
 
     def __open_file(self, cookie_file: Optional[str] = None) -> None:
-        cookie_file = cookie_file or _expand_paths("osx", *self.OSX_COOKIE_PATHS)
+        cookie_file = self.cookie_file or self._get_default_cookie_file_for("osx")
         if not cookie_file:
             raise BrowserCookieError(f"Can not find {self.NAME} cookie file")
         self.__buffer: BufferedReader = Path(cookie_file).open("rb")
@@ -1176,14 +1175,20 @@ class Safari(_Browser):
 
 class _LinuxOnlyBrowser(_Browser):
     SUPPORTED_OPERATING_SYSTEMS = ("linux",)
+    LINUX_COOKIE_PATHS: ClassVar[StrTuple] = ()
 
-    def _post_init(self, cookie_file: Optional[str] = None, *_):
-        assert self.SUPPORTED_OPERATING_SYSTEMS == ("linux",)
-        cookie_files = [cookie_file] if cookie_file else self._get_default_cookies_paths()
-        cookie_file = _expand_paths("linux", *cookie_files)
+    def _post_init(self):
+        assert self.SUPPORTED_OPERATING_SYSTEMS == ("linux",), "Do not override supported browser for this class"
+        cookie_file = self.cookie_file or self._get_default_cookie_file_for("linux")
         if not cookie_file:
             raise BrowserCookieError(f"Cannot find {self.NAME} cookie file")
         self.cookie_file = cookie_file
+
+    def _get_default_cookie_file_for(self, os_name: str) -> Optional[ExpandedPath]:
+        if self.cookie_file:
+            return self.cookie_file
+        if os_name == "linux":
+            return _expand_paths(os_name, *self.LINUX_COOKIE_PATHS)
 
     @abstractmethod
     def load(self): ...
@@ -1199,7 +1204,7 @@ class Lynx(_LinuxOnlyBrowser):
     )
 
     def load(self) -> http.cookiejar.CookieJar:
-        cj = http.cookiejar.CookieJar()
+        cookie_jar = http.cookiejar.CookieJar()
         if not self.cookie_file:
             raise BrowserCookieError("Cannot find Lynx cookie file")
         with Path(self.cookie_file).open() as f:
@@ -1216,15 +1221,15 @@ class Lynx(_LinuxOnlyBrowser):
                 secure = secure == "TRUE"
                 if self.domain_name in domain:
                     cookie = create_cookie(domain, path, secure, expires, name, value, False)
-                    cj.set_cookie(cookie)
-        return cj
+                    cookie_jar.set_cookie(cookie)
+        return cookie_jar
 
 
 class W3m(_LinuxOnlyBrowser):
     """Class for W3m"""
 
-    # see documentation in source code of w3m, file fm.h
     NAME = "W3m"
+    # see documentation in source code of w3m, file fm.h
     COO_USE: ClassVar[int] = 1
     COO_SECURE: ClassVar[int] = 2
     COO_DOMAIN: ClassVar[int] = 4
@@ -1234,7 +1239,7 @@ class W3m(_LinuxOnlyBrowser):
     LINUX_COOKIE_PATHS: ClassVar[StrTuple] = ("~/.w3m/cookie",)
 
     def load(self) -> http.cookiejar.CookieJar:
-        cj = http.cookiejar.CookieJar()
+        cookie_jar = http.cookiejar.CookieJar()
         assert self.cookie_file is not None
         with Path(self.cookie_file).open() as f:
             for line in f.read().splitlines():
@@ -1274,8 +1279,8 @@ class W3m(_LinuxOnlyBrowser):
                         comment_url,
                         {},
                     )
-                    cj.set_cookie(cookie)
-        return cj
+                    cookie_jar.set_cookie(cookie)
+        return cookie_jar
 
 
 def create_cookie(
@@ -1400,7 +1405,7 @@ def librewolf(
     return LibreWolf(cookie_file, domain_name, key_file).load()
 
 
-def safari(cookie_file: Optional[str] = None, domain_name: str = "", _=None):
+def safari(cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None):
     """Returns a cookiejar of the cookies and sessions used by Safari. Optionally
     pass in a domain name to only load cookies from the specified domain
     """
@@ -1436,7 +1441,7 @@ ALL_BROWSERS: list[type[_Browser]] = [
     W3m,
     Arc,
 ]
-all_browsers: list[CookieExtractor] = [
+ALL_EXTRACTORS: list[CookieExtractor] = [
     chrome,
     chromium,
     opera,
@@ -1451,6 +1456,9 @@ all_browsers: list[CookieExtractor] = [
     w3m,
     arc,
 ]
+
+
+all_browsers = ALL_EXTRACTORS  # Old name
 
 
 def load(domain_name: str = "") -> http.cookiejar.CookieJar:
@@ -1471,6 +1479,7 @@ def load(domain_name: str = "") -> http.cookiejar.CookieJar:
 
 __all__ = [
     "ALL_BROWSERS",
+    "ALL_EXTRACTORS",
     "BrowserCookieError",
     "all_browsers",
     "arc",
