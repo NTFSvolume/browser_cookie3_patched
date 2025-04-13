@@ -1,0 +1,124 @@
+[project]
+name = "browser_cookie3"
+authors = [{name = "NTFSvolume", email = "172021377+NTFSvolume@users.noreply.github.com"}]
+dependencies = [
+    "lz4 (>=4.4.4,<5.0.0)",
+    "pycryptodomex (>=3.22.0,<4.0.0)",
+    'jeepney (>=0.9.0,<0.10.0) ; python_version >= "3.7" and ("bsd" in sys_platform or sys_platform == "linux")',
+    'shadowcopy (>=0.0.4,<0.0.5) ; sys_platform == "windows"'
+]
+description = "browser_cookie3 fork with type hints, updated logic and modern sintax"
+keywords = [
+    "browser",
+    "browser_cookie3",
+    "cookie",
+    "fork"
+]
+license = {text = "LGPL-3.0"}
+readme = "README.md"
+requires-python = ">=3.9,<4"
+version = "0.1.0"
+
+[project.scripts]
+browser-cookie = "browser_cookie3.__main__:main"
+browser-cookie3 = "browser_cookie3.__main__:main"
+browser-cookie3_patched = "browser_cookie3.__main__:main"
+
+[project.urls]
+Changelog = "https://github.com/NTFSvolume/browser_cookie3_patched/blob/master/CHANGELOG.md"
+Repository = "https://github.com/NTFSvolume/browser_cookie3_patched"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "browser_cookie3",
+    "CHANGELOG.md"
+]
+
+[tool.hatch.build.targets.wheel]
+include = [
+    "browser_cookie3",
+    "CHANGELOG.md"
+]
+
+[tool.pytest.ini_options]
+minversion = "8.3"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "B",  # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "COM8",  # flake8-commas linter
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "FA102",  # future annotations
+    "FURB188",  # slice-to-remove-prefix-or-suffix
+    "I",  # isort
+    "N",  # PEP8 naming conventions
+    "PLR1716",  # boolean chained comparison
+    "PTH",  # use pathlib instead of os
+    "Q",  # flake8-quotes
+    "RUF",  # RUF specific fixes
+    "T20",  # flake8-print
+    "TC",  # flake8-type-checking
+    "TID",  # flake8-tidy-imports
+    "UP",  # pyupgrade
+    "W"  # pycodestyle warnings
+]
+extend-safe-fixes = [
+    "TC"  # move import from and to TYPE_CHECKING blocks
+]
+ignore = [
+    "COM812",  # missing-trailing-comma
+    "E501",  # suppress line-too-long, let formatter decide
+    "N806",  # uppercase variables in functions
+    "UP007"  # disable PEP 604 syntax suggestion (union type annotations with the | operator)
+]
+unfixable = [
+    "ERA"  # do not autoremove commented out code
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/{tests,docs}/*" = [
+    "E402",  # imports not at the top of the file.
+    "T20"  # flake8-print
+]
+"__init__.py" = ["E402"]  # imports not at the top of the file.
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.tomlsort]
+all = true
+ignore_case = true
+in_place = true
+sort_first = ["name", "project", "select", "tool"]
+spaces_before_inline_comment = 2
+spaces_indent_inline_array = 4
+
+[tool.uv]
+default-groups = [
+    "dev",
+    "test"
+]
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0.1,<5",
+    "ruff==0.11.0",
+    "snakeviz>=2.2.2,<3",
+    "tox>=4.24.1,<5"
+]
+test = [
+    "pytest-cov>=6.0.0,<7",
+    "pytest-mock",
+    "pytest>=8.3.4,<9"
+]
