@@ -1027,6 +1027,7 @@ class FirefoxBased(_Browser):
 
     def __add_session_cookies(self, cj: http.cookiejar.CookieJar) -> None:
         if not os.path.exists(self.session_file):
+            logger.warning(f"[{self._NAME}] sesison file '{self.session_file}' does not exists")
             return
         try:
             with Path(self.session_file).open("rb") as file_obj:
@@ -1034,13 +1035,19 @@ class FirefoxBased(_Browser):
         except ValueError as e:
             logger.error(f"Error parsing {self._NAME} session JSON: {e}")
         else:
+            logger.info(f"[{self._NAME}] Suscefully parsed session json")
+            has_cookies = False
             for window in json_data.get("windows", []):
                 for cookie in window.get("cookies", []):
                     if self.domain_name == "" or self.domain_name in cookie.get("host", ""):
                         cj.set_cookie(self.__create_session_cookie(cookie))
+                        has_cookies = True
+            if not has_cookies:
+                logger.warning(f"[{self._NAME}] Did not find any cookies in session file")
 
     def __add_session_cookies_lz4(self, cj: http.cookiejar.CookieJar) -> None:
         if not os.path.exists(self.session_file_lz4):
+            logger.warning(f"[{self._NAME}] lz4 file '{self.session_file_lz4}' does not exists")
             return
         try:
             with Path(self.session_file_lz4).open("rb") as file_obj:
@@ -1049,9 +1056,12 @@ class FirefoxBased(_Browser):
         except ValueError as e:
             logger.error(f"Error parsing {self._NAME} session JSON LZ4: {e}")
         else:
+            logger.info(f"[{self._NAME}] Successfully decrypted lz4 file")
             for cookie in json_data.get("cookies", []):
                 if self.domain_name == "" or self.domain_name in cookie.get("host", ""):
                     cj.set_cookie(self.__create_session_cookie(cookie))
+            else:
+                logger.warning(f"[{self._NAME}] Did not find any cookies in lz4 file")
 
     def load(self) -> http.cookiejar.CookieJar:
         cj = http.cookiejar.CookieJar()
@@ -1066,7 +1076,7 @@ class FirefoxBased(_Browser):
                 if e.args[0].startswith(("no such table: ", "file is not a database")):
                     raise BrowserCookieError(f"File {self.cookie_file} is not a Firefox cookie file") from None
                 raise
-
+            logger.info(f"[{self._NAME}] Got cookies from database")
             for item in cur.fetchall():
                 host, path, secure, expires, name, value, http_only = item
                 cookie = create_cookie(host, path, secure, expires, name, value, http_only)
