@@ -17,23 +17,26 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: 3.11
+      - name: Install Vivaldi
+        run: |
+          curl -fsSLO https://downloads.vivaldi.com/stable/vivaldi-stable_7.3.3635.9-1_amd64.deb
+          sudo apt install ./vivaldi-stable_7.3.3635.9-1_amd64.deb -y
+        continue-on-error: true
       - name: Install LibreWolf
         run: |
           sudo apt update && sudo apt install extrepo -y
           sudo extrepo enable librewolf
           sudo apt update && sudo apt install librewolf -y
+        continue-on-error: true
       - name: Install Brave
         run: |
           curl -fsSL https://dl.brave.com/install.sh | sudo sh
-      - name: Install Vivaldi
-        run: |
-          curl -fsSLO https://downloads.vivaldi.com/stable/vivaldi-stable_7.3.3635.9-1_armhf.deb
-          sudo apt install ./vivaldi-stable_7.3.3635.9-1_armhf.deb -y
-
+        continue-on-error: true
       - name: Install Opera
         run: |
           https://download5.operacdn.com/ftp/pub/opera/desktop/117.0.5408.197/linux/opera-stable_117.0.5408.197_amd64.deb
           sudo apt install ./opera-stable_117.0.5408.197_amd64.deb -y
+        continue-on-error: true
 
       - name: Install patched geckodriver
         run: |
