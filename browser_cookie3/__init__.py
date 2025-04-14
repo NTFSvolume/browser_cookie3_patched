@@ -380,7 +380,7 @@ class _Browser(ABC):
 
     DO NOT Override __init__ in subclasses. Define custom logic for the browser in the `_post_init` method"""
 
-    NAME: ClassVar[str] = ""
+    _NAME: ClassVar[str] = ""
     SUPPORTED_OPERATING_SYSTEMS: ClassVar[tuple[SupportedOS, ...]] = ()
 
     LINUX_COOKIE_PATHS: ClassVar[_StrTuple] = ()
@@ -393,10 +393,10 @@ class _Browser(ABC):
         domain_name: Optional[str] = None,
         key_file: Optional[str] = None,
     ) -> None:
-        assert self.NAME, "Subclasses must define a NAME"
+        assert self._NAME, "Subclasses must define a NAME"
         assert self.SUPPORTED_OPERATING_SYSTEMS, "Subclasses must define at least 1 supported OS"
         if not self.is_supported():
-            msg = f"OS not recognized. {self.NAME} browser is supported on: {self.SUPPORTED_OPERATING_SYSTEMS}"
+            msg = f"OS not recognized. {self._NAME} browser is supported on: {self.SUPPORTED_OPERATING_SYSTEMS}"
             raise UnsupportedOSError(msg)
         self.cookie_file: Optional[_ExpandedPath] = _ExpandedOrNone(cookie_file)
         self.key_file: Optional[_ExpandedPath] = _ExpandedOrNone(key_file)
@@ -404,7 +404,7 @@ class _Browser(ABC):
         self._post_init()
 
     def __str__(self) -> str:
-        return self.NAME
+        return self._NAME
 
     @classmethod
     def is_supported(cls) -> bool:
@@ -444,7 +444,7 @@ class _Browser(ABC):
     def _set_actual_cookie_file_to_use(self) -> None:
         cookie_file = self.cookie_file or self._find_default_cookie_file()
         if not cookie_file:
-            raise BrowserCookieError(f"Failed to find cookies for {self.NAME} browser")
+            raise BrowserCookieError(f"Failed to find cookies for {self._NAME} browser")
         self.cookie_file = cookie_file
 
 
@@ -503,7 +503,7 @@ class ChromiumBased(_Browser):
             linux_cookies = _generate_nix_paths_chromium(self.LINUX_COOKIE_PATHS, self.LINUX_CHANNELS)
             return _expand_paths(os_name, *linux_cookies)
         if os_name == "windows":
-            if self.NAME.lower() == "chrome" and (group_policy_path := _windows_group_policy_path()):
+            if self._NAME.lower() == "chrome" and (group_policy_path := _windows_group_policy_path()):
                 return group_policy_path
             windows_cookies = _generate_win_paths_chromium(self.WINDOWS_COOKIES_PATHS, self.WINDOWS_CHANNELS)
             return _expand_paths(os_name, *windows_cookies)
@@ -690,7 +690,7 @@ class ChromiumBased(_Browser):
 class Chrome(ChromiumBased):
     """Class for Google Chrome"""
 
-    NAME = "Chrome"
+    _NAME = "Chrome"
     OSX_KEY_SERVICE = "Chrome Safe Storage"
     OSX_KEY_USER = "Chrome"
     OSX_CHANNELS = ("", " Beta", " Dev")
@@ -723,7 +723,7 @@ class Chrome(ChromiumBased):
 class Arc(ChromiumBased):
     """Class for Arc"""
 
-    NAME = "Arc"
+    _NAME = "Arc"
     SUPPORTED_OPERATING_SYSTEMS = ("osx",)
     OSX_COOKIE_PATHS = (
         "~/Library/Application Support/Arc/User Data/Default/Cookies",
@@ -738,7 +738,7 @@ class Arc(ChromiumBased):
 class Chromium(ChromiumBased):
     """Class for Chromium"""
 
-    NAME = "Chromium"
+    _NAME = "Chromium"
     LINUX_COOKIE_PATHS = (
         "~/.config/chromium/Default/Cookies",
         "~/.config/chromium/Profile */Cookies",
@@ -764,7 +764,7 @@ class Chromium(ChromiumBased):
 class Opera(ChromiumBased):
     """Class for Opera"""
 
-    NAME = "Opera"
+    _NAME = "Opera"
     LINUX_COOKIE_PATHS = (
         "~/.config/opera/Cookies",
         "~/.config/opera-beta/Cookies",
@@ -793,7 +793,7 @@ class Opera(ChromiumBased):
 class OperaGX(ChromiumBased):
     """Class for Opera GX"""
 
-    NAME = "Opera GX"
+    _NAME = "Opera GX"
     SUPPORTED_OPERATING_SYSTEMS = ("osx", "windows")
     WINDOWS_COOKIES_PATHS = (
         "Opera Software\\Opera GX {channel}\\Cookies",
@@ -808,7 +808,7 @@ class OperaGX(ChromiumBased):
 
 
 class Brave(ChromiumBased):
-    NAME = "Brave"
+    _NAME = "Brave"
     LINUX_COOKIE_PATHS = (
         "~/.config/BraveSoftware/Brave-Browser{channel}/Default/Cookies",
         "~/.config/BraveSoftware/Brave-Browser{channel}/Profile */Cookies",
@@ -838,7 +838,7 @@ class Brave(ChromiumBased):
 class Edge(ChromiumBased):
     """Class for Microsoft Edge"""
 
-    NAME = "Edge"
+    _NAME = "Edge"
 
     LINUX_COOKIE_PATHS = (
         "~/.config/microsoft-edge{channel}/Default/Cookies",
@@ -869,7 +869,7 @@ class Edge(ChromiumBased):
 class Vivaldi(ChromiumBased):
     """Class for Vivaldi Browser"""
 
-    NAME = "Vivaldi"
+    _NAME = "Vivaldi"
     LINUX_COOKIE_PATHS = (
         "~/.config/vivaldi/Default/Cookies",
         "~/.config/vivaldi/Profile */Cookies",
@@ -950,7 +950,7 @@ class FirefoxBased(_Browser):
                 expanded = os.path.expanduser(path)
             if os.path.isdir(expanded):
                 return expanded
-        raise BrowserCookieError(f"Could not find {cls.NAME} profile directory")
+        raise BrowserCookieError(f"Could not find {cls._NAME} profile directory")
 
     @classmethod
     def _get_default_cookie_file_for(cls, os_name: SupportedOS) -> Optional[_ExpandedPath]:
@@ -988,7 +988,7 @@ class FirefoxBased(_Browser):
             with Path(self.session_file).open("rb") as file_obj:
                 json_data: _NestedJson[_DictCookies] = json.load(file_obj)
         except ValueError as e:
-            print(f"Error parsing {self.NAME} session JSON: {e}")  # noqa: T201
+            print(f"Error parsing {self._NAME} session JSON: {e}")  # noqa: T201
         else:
             for window in json_data.get("windows", []):
                 for cookie in window.get("cookies", []):
@@ -1003,7 +1003,7 @@ class FirefoxBased(_Browser):
                 file_obj.read(8)
                 json_data: _Json[_DictCookies] = json.loads(lz4.block.decompress(file_obj.read()))
         except ValueError as e:
-            print(f"Error parsing {self.NAME} session JSON LZ4: {e}")  # noqa: T201
+            print(f"Error parsing {self._NAME} session JSON LZ4: {e}")  # noqa: T201
         else:
             for cookie in json_data.get("cookies", []):
                 if self.domain_name == "" or self.domain_name in cookie.get("host", ""):
@@ -1037,7 +1037,7 @@ class FirefoxBased(_Browser):
 class Firefox(FirefoxBased):
     """Class for Firefox"""
 
-    NAME = "Firefox"
+    _NAME = "Firefox"
     LINUX_DATA_DIRS = (
         "~/snap/firefox/common/.mozilla/firefox",
         "~/.mozilla/firefox",
@@ -1052,7 +1052,7 @@ class Firefox(FirefoxBased):
 class LibreWolf(FirefoxBased):
     """Class for LibreWolf"""
 
-    NAME = "LibreWolf"
+    _NAME = "LibreWolf"
     LINUX_DATA_DIRS = (
         "~/snap/librewolf/common/.librewolf",
         "~/.librewolf",
@@ -1067,7 +1067,7 @@ class LibreWolf(FirefoxBased):
 class Safari(_Browser):
     """Class for Safari"""
 
-    NAME = "Safari"
+    _NAME = "Safari"
     APPLE_TO_UNIX_TIME = 978307200
     NEW_ISSUE_MESSAGE = f"Page format changed.\nPlease create a new issue on: {_NEW_ISSUE_URL}"
     OSX_COOKIE_PATHS: ClassVar[_StrTuple] = (
@@ -1183,7 +1183,7 @@ class Safari(_Browser):
 class Lynx(_SimpleBrowser):
     """Class for Lynx"""
 
-    NAME = "Lynx"
+    _NAME = "Lynx"
     SUPPORTED_OPERATING_SYSTEMS = ("linux",)
     LINUX_COOKIE_PATHS: ClassVar[_StrTuple] = (
         "~/.lynx_cookies",  # most systems, see lynx man page
@@ -1214,7 +1214,7 @@ class Lynx(_SimpleBrowser):
 class W3m(_SimpleBrowser):
     """Class for W3m"""
 
-    NAME = "W3m"
+    _NAME = "W3m"
     SUPPORTED_OPERATING_SYSTEMS = ("linux",)
     # see documentation in source code of w3m, file fm.h
     COO_USE: ClassVar[int] = 1
