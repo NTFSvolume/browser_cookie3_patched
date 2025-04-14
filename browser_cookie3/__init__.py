@@ -9,6 +9,7 @@ import configparser
 import glob
 import http.cookiejar
 import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -17,8 +18,33 @@ import subprocess
 import sys
 import tempfile
 from abc import ABC, abstractmethod
+from enum import Enum, auto
 from io import BufferedReader, BytesIO
-from typing import Any, ClassVar, Literal, NamedTuple, NewType, Optional, TypeVar, Union, get_args
+from typing import Any, ClassVar, Literal, NamedTuple, NewType, Optional, TypeVar, Union
+
+
+class BrowserName(Enum):
+    CHROME = auto()
+    CHROMIUM = auto()
+    OPERA = auto()
+    OPERA_GX = auto()
+    BRAVE = auto()
+    EDGE = auto()
+    VIVALDI = auto()
+    FIREFOX = auto()
+    LIBREWOLF = auto()
+
+
+_B = BrowserName
+
+
+logger = logging.getLogger("browser_cookie3")
+logger.setLevel(logging.INFO)
+console_handler = logging.StreamHandler()
+formatter = logging.Formatter("%(levelname)s - %(message)s")
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
 
 shadowcopy = None
 _IS_LINUX = _IS_WINDOWS = _IS_MACOS = False
@@ -152,15 +178,18 @@ def _get_osx_keychain_password(osx_key_service: str, osx_key_user: str) -> bytes
 
 
 def _expand_win_path(path: Union[_WinPath, str]) -> _ExpandedPath:
-    if not isinstance(path, tuple):
+    if isinstance(path, str):
         path = _WinPath("APPDATA", path)
+    if not isinstance(path, tuple):
+        raise TypeError(f"Expected WinPath or str, not {type(path).__name__}")
+    path = _WinPath(*path)
     app_data = os.getenv(path.env, "")
     return _ExpandedPath(os.path.join(app_data, path.path))
 
 
 def _expand_paths_impl(os_name: SupportedOS, *paths: Union[_WinPath, str]) -> Generator[_ExpandedPath]:
     """Expands user paths on Linux, OSX, and windows"""
-    assert os_name in get_args(SupportedOS)
+    assert os_name in ("windows", "linux", "osx")
     if not paths:
         return
 
@@ -380,7 +409,7 @@ class _Browser(ABC):
 
     DO NOT Override __init__ in subclasses. Define custom logic for the browser in the `_post_init` method"""
 
-    NAME: ClassVar[str] = ""
+    _NAME: ClassVar[str] = ""
     SUPPORTED_OPERATING_SYSTEMS: ClassVar[tuple[SupportedOS, ...]] = ()
 
     LINUX_COOKIE_PATHS: ClassVar[_StrTuple] = ()
@@ -393,10 +422,10 @@ class _Browser(ABC):
         domain_name: Optional[str] = None,
         key_file: Optional[str] = None,
     ) -> None:
-        assert self.NAME, "Subclasses must define a NAME"
+        assert self._NAME, "Subclasses must define a NAME"
         assert self.SUPPORTED_OPERATING_SYSTEMS, "Subclasses must define at least 1 supported OS"
         if not self.is_supported():
-            msg = f"OS not recognized. {self.NAME} browser is supported on: {self.SUPPORTED_OPERATING_SYSTEMS}"
+            msg = f"OS not recognized. {self._NAME} browser is supported on: {self.SUPPORTED_OPERATING_SYSTEMS}"
             raise UnsupportedOSError(msg)
         self.cookie_file: Optional[_ExpandedPath] = _ExpandedOrNone(cookie_file)
         self.key_file: Optional[_ExpandedPath] = _ExpandedOrNone(key_file)
@@ -404,7 +433,7 @@ class _Browser(ABC):
         self._post_init()
 
     def __str__(self) -> str:
-        return self.NAME
+        return self._NAME
 
     @classmethod
     def is_supported(cls) -> bool:
@@ -444,7 +473,7 @@ class _Browser(ABC):
     def _set_actual_cookie_file_to_use(self) -> None:
         cookie_file = self.cookie_file or self._find_default_cookie_file()
         if not cookie_file:
-            raise BrowserCookieError(f"Failed to find cookies for {self.NAME} browser")
+            raise BrowserCookieError(f"Failed to find cookies for {self._NAME} browser")
         self.cookie_file = cookie_file
 
 
@@ -503,7 +532,7 @@ class ChromiumBased(_Browser):
             linux_cookies = _generate_nix_paths_chromium(self.LINUX_COOKIE_PATHS, self.LINUX_CHANNELS)
             return _expand_paths(os_name, *linux_cookies)
         if os_name == "windows":
-            if self.NAME.lower() == "chrome" and (group_policy_path := _windows_group_policy_path()):
+            if self._NAME.lower() == "chrome" and (group_policy_path := _windows_group_policy_path()):
                 return group_policy_path
             windows_cookies = _generate_win_paths_chromium(self.WINDOWS_COOKIES_PATHS, self.WINDOWS_CHANNELS)
             return _expand_paths(os_name, *windows_cookies)
@@ -690,7 +719,7 @@ class ChromiumBased(_Browser):
 class Chrome(ChromiumBased):
     """Class for Google Chrome"""
 
-    NAME = "Chrome"
+    _NAME = "Chrome"
     OSX_KEY_SERVICE = "Chrome Safe Storage"
     OSX_KEY_USER = "Chrome"
     OSX_CHANNELS = ("", " Beta", " Dev")
@@ -723,7 +752,7 @@ class Chrome(ChromiumBased):
 class Arc(ChromiumBased):
     """Class for Arc"""
 
-    NAME = "Arc"
+    _NAME = "Arc"
     SUPPORTED_OPERATING_SYSTEMS = ("osx",)
     OSX_COOKIE_PATHS = (
         "~/Library/Application Support/Arc/User Data/Default/Cookies",
@@ -738,7 +767,7 @@ class Arc(ChromiumBased):
 class Chromium(ChromiumBased):
     """Class for Chromium"""
 
-    NAME = "Chromium"
+    _NAME = "Chromium"
     LINUX_COOKIE_PATHS = (
         "~/.config/chromium/Default/Cookies",
         "~/.config/chromium/Profile */Cookies",
@@ -764,7 +793,7 @@ class Chromium(ChromiumBased):
 class Opera(ChromiumBased):
     """Class for Opera"""
 
-    NAME = "Opera"
+    _NAME = "Opera"
     LINUX_COOKIE_PATHS = (
         "~/.config/opera/Cookies",
         "~/.config/opera-beta/Cookies",
@@ -793,7 +822,7 @@ class Opera(ChromiumBased):
 class OperaGX(ChromiumBased):
     """Class for Opera GX"""
 
-    NAME = "Opera GX"
+    _NAME = "Opera GX"
     SUPPORTED_OPERATING_SYSTEMS = ("osx", "windows")
     WINDOWS_COOKIES_PATHS = (
         "Opera Software\\Opera GX {channel}\\Cookies",
@@ -808,7 +837,7 @@ class OperaGX(ChromiumBased):
 
 
 class Brave(ChromiumBased):
-    NAME = "Brave"
+    _NAME = "Brave"
     LINUX_COOKIE_PATHS = (
         "~/.config/BraveSoftware/Brave-Browser{channel}/Default/Cookies",
         "~/.config/BraveSoftware/Brave-Browser{channel}/Profile */Cookies",
@@ -838,7 +867,7 @@ class Brave(ChromiumBased):
 class Edge(ChromiumBased):
     """Class for Microsoft Edge"""
 
-    NAME = "Edge"
+    _NAME = "Edge"
 
     LINUX_COOKIE_PATHS = (
         "~/.config/microsoft-edge{channel}/Default/Cookies",
@@ -869,7 +898,7 @@ class Edge(ChromiumBased):
 class Vivaldi(ChromiumBased):
     """Class for Vivaldi Browser"""
 
-    NAME = "Vivaldi"
+    _NAME = "Vivaldi"
     LINUX_COOKIE_PATHS = (
         "~/.config/vivaldi/Default/Cookies",
         "~/.config/vivaldi/Profile */Cookies",
@@ -897,6 +926,7 @@ class Vivaldi(ChromiumBased):
 class FirefoxBased(_Browser):
     """Superclass for Firefox based browsers"""
 
+    SUPPORTED_OPERATING_SYSTEMS = ("windows", "linux", "osx")
     LINUX_DATA_DIRS: ClassVar[_StrTuple] = ()
     WINDOWS_DATA_DIRS: ClassVar[tuple[_WinPath, ...]] = ()
     OSX_DATA_DIRS: ClassVar[_StrTuple] = ()
@@ -950,7 +980,7 @@ class FirefoxBased(_Browser):
                 expanded = os.path.expanduser(path)
             if os.path.isdir(expanded):
                 return expanded
-        raise BrowserCookieError(f"Could not find {cls.NAME} profile directory")
+        raise BrowserCookieError(f"Could not find {cls._NAME} profile directory")
 
     @classmethod
     def _get_default_cookie_file_for(cls, os_name: SupportedOS) -> Optional[_ExpandedPath]:
@@ -988,7 +1018,7 @@ class FirefoxBased(_Browser):
             with Path(self.session_file).open("rb") as file_obj:
                 json_data: _NestedJson[_DictCookies] = json.load(file_obj)
         except ValueError as e:
-            print(f"Error parsing {self.NAME} session JSON: {e}")  # noqa: T201
+            logger.error(f"Error parsing {self._NAME} session JSON: {e}")
         else:
             for window in json_data.get("windows", []):
                 for cookie in window.get("cookies", []):
@@ -1003,7 +1033,7 @@ class FirefoxBased(_Browser):
                 file_obj.read(8)
                 json_data: _Json[_DictCookies] = json.loads(lz4.block.decompress(file_obj.read()))
         except ValueError as e:
-            print(f"Error parsing {self.NAME} session JSON LZ4: {e}")  # noqa: T201
+            logger.error(f"Error parsing {self._NAME} session JSON LZ4: {e}")
         else:
             for cookie in json_data.get("cookies", []):
                 if self.domain_name == "" or self.domain_name in cookie.get("host", ""):
@@ -1037,7 +1067,7 @@ class FirefoxBased(_Browser):
 class Firefox(FirefoxBased):
     """Class for Firefox"""
 
-    NAME = "Firefox"
+    _NAME = "Firefox"
     LINUX_DATA_DIRS = (
         "~/snap/firefox/common/.mozilla/firefox",
         "~/.mozilla/firefox",
@@ -1052,7 +1082,7 @@ class Firefox(FirefoxBased):
 class LibreWolf(FirefoxBased):
     """Class for LibreWolf"""
 
-    NAME = "LibreWolf"
+    _NAME = "LibreWolf"
     LINUX_DATA_DIRS = (
         "~/snap/librewolf/common/.librewolf",
         "~/.librewolf",
@@ -1067,7 +1097,8 @@ class LibreWolf(FirefoxBased):
 class Safari(_Browser):
     """Class for Safari"""
 
-    NAME = "Safari"
+    _NAME = "Safari"
+    SUPPORTED_OPERATING_SYSTEMS = ("osx",)
     APPLE_TO_UNIX_TIME = 978307200
     NEW_ISSUE_MESSAGE = f"Page format changed.\nPlease create a new issue on: {_NEW_ISSUE_URL}"
     OSX_COOKIE_PATHS: ClassVar[_StrTuple] = (
@@ -1183,7 +1214,7 @@ class Safari(_Browser):
 class Lynx(_SimpleBrowser):
     """Class for Lynx"""
 
-    NAME = "Lynx"
+    _NAME = "Lynx"
     SUPPORTED_OPERATING_SYSTEMS = ("linux",)
     LINUX_COOKIE_PATHS: ClassVar[_StrTuple] = (
         "~/.lynx_cookies",  # most systems, see lynx man page
@@ -1214,7 +1245,7 @@ class Lynx(_SimpleBrowser):
 class W3m(_SimpleBrowser):
     """Class for W3m"""
 
-    NAME = "W3m"
+    _NAME = "W3m"
     SUPPORTED_OPERATING_SYSTEMS = ("linux",)
     # see documentation in source code of w3m, file fm.h
     COO_USE: ClassVar[int] = 1
@@ -1445,30 +1476,73 @@ ALL_EXTRACTORS: list[_CookieExtractor] = [
     arc,
 ]
 
+SUPPORTED_BROWSERS = [browser.__name__ for browser in ALL_EXTRACTORS]
+
+_BROWSER_MAP = dict(zip(SUPPORTED_BROWSERS, ALL_BROWSERS))
+
+_EXTRACTOR_MAP = dict(zip(SUPPORTED_BROWSERS, ALL_EXTRACTORS))
+
 
 all_browsers = ALL_EXTRACTORS  # Old name
 
 
 def load(domain_name: str = "") -> http.cookiejar.CookieJar:
-    """Try to load cookies from all supported browsers and return combined cookiejar
-    Optionally pass in a domain name to only load cookies from the specified domain
-    """
-    cj = http.cookiejar.CookieJar()
+    """Try to load cookies from all supported browsers and return combined cookiejar.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
+    cookie_jar = http.cookiejar.CookieJar()
     for browser in ALL_BROWSERS:
         if not browser.is_supported():
             continue
         try:
             for cookie in browser(domain_name=domain_name).load():
-                cj.set_cookie(cookie)
+                cookie_jar.set_cookie(cookie)
         except BrowserCookieError:
             pass
-    return cj
+    return cookie_jar
+
+
+def _dump_cookie(cookie: http.cookiejar.Cookie, indent: int = 4, **kwargs: Any) -> str:
+    return json.dumps(
+        {k: v for k, v in vars(cookie).items() if v is not None and (k, v) != ("_rest", {})}, indent=indent, **kwargs
+    )
+
+
+def _get_browser(browser_name: str) -> type[_Browser]:
+    if not browser_name or not isinstance(browser_name, str):
+        raise TypeError("browser_name value needs to be a none empty string")
+    browser = _BROWSER_MAP.get(browser_name.lower())
+    if not browser:
+        raise BrowserCookieError(f"Browser {browser_name} is not a known browser")
+    return browser
+
+
+def _get_extractor(browser_name: str) -> _CookieExtractor:
+    _ = _get_browser(browser_name)  # Just to do the same validations
+    return _EXTRACTOR_MAP[browser_name.lower()]
+
+
+get_browser = _get_extractor  # This is what most people would assume the function does
+
+
+def load_from(
+    browser_name: str, cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
+) -> http.cookiejar.CookieJar:
+    browser = _get_browser(browser_name)
+    return browser(cookie_file, domain_name, key_file).load()
+
+
+def get_supported_browsers():
+    return [name for name, browser in _BROWSER_MAP.items() if browser.is_supported()]
 
 
 __all__ = [
     "ALL_BROWSERS",
     "ALL_EXTRACTORS",
+    "SUPPORTED_BROWSERS",
     "BrowserCookieError",
+    "CookieDecryptionError",
+    "UnsupportedOSError",
     "all_browsers",
     "arc",
     "brave",
@@ -1476,8 +1550,10 @@ __all__ = [
     "chromium",
     "edge",
     "firefox",
+    "get_browser",
     "librewolf",
     "load",
+    "load_from",
     "lynx",
     "opera",
     "opera_gx",
@@ -1488,4 +1564,6 @@ __all__ = [
 
 
 if __name__ == "__main__":
-    print(load())  # noqa: T201
+    print(get_supported_browsers())  # noqa: T201
+    for cookie in load():
+        print(_dump_cookie(cookie))  # noqa: T201
