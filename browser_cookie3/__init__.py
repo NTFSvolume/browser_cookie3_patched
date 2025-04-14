@@ -1445,6 +1445,8 @@ ALL_EXTRACTORS: list[_CookieExtractor] = [
     arc,
 ]
 
+SUPPORTED_BROWSERS = [browser.__name__ for browser in ALL_EXTRACTORS]
+
 
 all_browsers = ALL_EXTRACTORS  # Old name
 
@@ -1468,6 +1470,7 @@ def load(domain_name: str = "") -> http.cookiejar.CookieJar:
 __all__ = [
     "ALL_BROWSERS",
     "ALL_EXTRACTORS",
+    "SUPPORTED_BROWSERS",
     "BrowserCookieError",
     "all_browsers",
     "arc",
