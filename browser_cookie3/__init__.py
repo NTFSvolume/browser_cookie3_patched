@@ -131,6 +131,7 @@ def _windows_group_policy_path() -> Optional[_ExpandedPath]:
 def _crypt_unprotect_data(
     cipher_text: bytes = b"", entropy: bytes = b"", reserved=None, prompt_struct=None, is_key: bool = False
 ) -> Union[tuple[Optional[str], bytes], tuple[Optional[str], str]]:
+    logger.info(f"Decrypting windows cypher {locals()}")
     assert _IS_WINDOWS
     import ctypes
     import ctypes.wintypes
@@ -212,7 +213,9 @@ def _newest(paths: list[_ExpandedPath]) -> Optional[_ExpandedPath]:
 
 
 def _expand_paths(os_name: SupportedOS, *paths: Union[_WinPath, str]) -> Optional[_ExpandedPath]:
-    return _newest(sorted(_expand_paths_impl(os_name, *paths)))
+    path = _newest(sorted(_expand_paths_impl(os_name, *paths)))
+    logger.info(f"Using expanded path : {path}")
+    return path
 
 
 def _normalize_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple] = None) -> tuple[_StrTuple, _StrTuple]:
@@ -479,6 +482,7 @@ class _Browser(ABC):
         cookie_file = self.cookie_file or self._find_default_cookie_file()
         if not cookie_file:
             raise BrowserCookieError(f"Failed to find cookies for {self._NAME} browser")
+        logger.info(f"[{self._NAME}] Using cookie file: {cookie_file}")
         self.cookie_file = cookie_file
 
 
@@ -585,6 +589,12 @@ class ChromiumBased(_Browser):
                     assert isinstance(v10_key, bytes)
                     self.v10_key = v10_key
 
+        if self.v10_key:
+            logger.info(f"Got {self._NAME} v10 key: {self.v10_key}")
+
+        if getattr(self, "v11_key", None):
+            logger.info(f"Got {self._NAME} v11 key: {self.v11_key}")
+
     def load(self) -> http.cookiejar.CookieJar:
         """Load sqlite cookies into a cookiejar"""
         cj = http.cookiejar.CookieJar()
@@ -593,6 +603,8 @@ class ChromiumBased(_Browser):
             con.text_factory = _text_factory
             cursor = con.cursor()
             has_integrity_check_for_cookie_domain = self._has_integrity_check_for_cookie_domain(cursor)
+            if has_integrity_check_for_cookie_domain:
+                logger.info(f"Cookies from {self._NAME} have integrity check")
             try:
                 # chrome <=55
                 cursor.execute(
@@ -627,6 +639,7 @@ class ChromiumBased(_Browser):
                     expires: Optional[int] = (expires_nt_time_epoch / 1000000) - self.UNIX_TO_NT_EPOCH_OFFSET
 
                 value = self._decrypt(value, enc_value, has_integrity_check_for_cookie_domain)
+                logger.error(f"[{self._NAME}] Decrypted value of cookies '{name}' from '{host}': {value}")
                 c = create_cookie(host, path, secure, expires, name, value, http_only)
                 cj.set_cookie(c)
         return cj
@@ -668,6 +681,7 @@ class ChromiumBased(_Browser):
     def _decrypt(self, value: str, encrypted_value: bytes, has_integrity_check_for_cookie_domain: bool = False) -> str:
         """Decrypt encoded cookies"""
 
+        logger.info(f"Decrypting Cookies from {self._NAME}. data: {locals()}")
         if _IS_WINDOWS:
             try:
                 return self._decrypt_windows_chromium(value, encrypted_value)
@@ -708,17 +722,22 @@ class ChromiumBased(_Browser):
         for key in keys:
             assert key is not None
             cipher = AES.new(key, AES.MODE_CBC, self.iv)
+            logger.info(f"cipher for {self._NAME}: {cipher}")
 
-            # will rise Value Error: invalid padding byte if the key is wrong,
+            # will raise Value Error: invalid padding byte if the key is wrong,
             # probably we did not got the key and used peanuts
             try:
                 decrypted = unpad(cipher.decrypt(encrypted_value), AES.block_size)
                 if has_integrity_check_for_cookie_domain:
+                    logger.error(f"Shifting cookies from {self._NAME} (has integrity check)")
                     decrypted = decrypted[32:]
                 return decrypted.decode("utf-8")
-            except ValueError:
+            except ValueError as e:
+                logger.error(f"Could not decrypt cipher for {self._NAME}: {e}")
                 pass
-        raise CookieDecryptionError("Unable to get key for cookie decryption")
+        msg = "Unable to get key for cookie decryption"
+        logger.error(f"{msg} from {self._NAME}")
+        raise CookieDecryptionError(msg)
 
 
 class Chrome(ChromiumBased):
@@ -976,18 +995,6 @@ class FirefoxBased(_Browser):
         return fallback_path
 
     @classmethod
-    def __expand_and_check_path(cls, *paths: Union[_WinPath, str]) -> str:
-        """Expands a path to a list of paths and returns the first one that exists"""
-        for path in paths:
-            if isinstance(path, tuple):
-                expanded = _expand_win_path(path)
-            else:
-                expanded = os.path.expanduser(path)
-            if os.path.isdir(expanded):
-                return expanded
-        raise BrowserCookieError(f"Could not find {cls._NAME} profile directory")
-
-    @classmethod
     def _get_default_cookie_file_for(cls, os_name: SupportedOS) -> Optional[_ExpandedPath]:
         data_dirs = None
         if os_name == "osx":
@@ -998,7 +1005,9 @@ class FirefoxBased(_Browser):
             data_dirs = cls.WINDOWS_DATA_DIRS
 
         if data_dirs:
-            user_data_path = cls.__expand_and_check_path(*data_dirs)
+            user_data_path = _expand_paths(os_name, *data_dirs)
+            if not user_data_path:
+                raise BrowserCookieError(f"Could not find {cls._NAME} profile directory")
             profile = cls.get_default_profile(user_data_path)
             cookie_files: list[str] = glob.glob(os.path.join(profile, "cookies.sqlite")) or []
             if cookie_files:
@@ -1503,7 +1512,8 @@ def load(domain_name: str = "") -> http.cookiejar.CookieJar:
         try:
             for cookie in browser(domain_name=domain_name).load():
                 cookie_jar.set_cookie(cookie)
-        except BrowserCookieError:
+        except BrowserCookieError as e:
+            logger.error(repr(e))
             pass
     return cookie_jar
 
@@ -1570,7 +1580,7 @@ __all__ = [
 
 
 if __name__ == "__main__":
-    Safari().load()
     print(get_supported_browsers())  # noqa: T201
-    for cookie in load():
-        print(_dump_cookie(cookie))  # noqa: T201
+    load()
+    # for cookie in load():
+    #   print(_dump_cookie(cookie))
