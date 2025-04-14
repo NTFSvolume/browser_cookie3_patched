@@ -1113,6 +1113,7 @@ class Safari(_Browser):
 
     def _post_init(self, cookie_file: Optional[str] = None, domain_name: str = "") -> None:
         self.__offset = 0
+        self.__buffer = None  # type: ignore
         self._set_actual_cookie_file_to_use()
         assert self.cookie_file is not None
         self.__buffer: BufferedReader = Path(self.cookie_file).open("rb")
@@ -1123,7 +1124,7 @@ class Safari(_Browser):
             return _expand_paths("osx", *self.OSX_COOKIE_PATHS)
 
     def __del__(self) -> None:
-        if self.__buffer:
+        if hasattr(self, "__buffer") and self.__buffer:
             self.__buffer.close()
 
     def __read_file(self, size: int, offset: Optional[int] = None) -> BytesIO:
@@ -1569,6 +1570,7 @@ __all__ = [
 
 
 if __name__ == "__main__":
+    Safari().load()
     print(get_supported_browsers())  # noqa: T201
     for cookie in load():
         print(_dump_cookie(cookie))  # noqa: T201
