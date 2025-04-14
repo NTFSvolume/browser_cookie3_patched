@@ -1472,6 +1472,10 @@ def load(domain_name: str = "") -> http.cookiejar.CookieJar:
     return cookie_jar
 
 
+def _dump_cookie(cookie: http.cookiejar.Cookie) -> str:
+    return json.dumps({k: v for k, v in vars(cookie).items() if v is not None and (k, v) != ("_rest", {})}, indent=2)
+
+
 def _get_browser(browser_name: str) -> type[_Browser]:
     if not browser_name or not isinstance(browser_name, str):
         raise TypeError("browser_name value needs to be a none empty string")
@@ -1529,4 +1533,5 @@ __all__ = [
 
 if __name__ == "__main__":
     print(get_supported_browsers())  # noqa: T201
-    print(load())  # noqa: T201
+    for cookie in load():
+        print(_dump_cookie(cookie))  # noqa: T201
