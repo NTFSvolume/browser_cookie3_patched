@@ -1,14 +1,11 @@
-from __future__ import annotations
-
 import argparse
-import json
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Optional
 
 import browser_cookie3
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from http.cookiejar import Cookie, CookieJar
+    from http.cookiejar import CookieJar
 
 
 def parse_args(args: Optional[Sequence[str]] = None):
@@ -35,13 +32,14 @@ def parse_args(args: Optional[Sequence[str]] = None):
         default=None,
         help="Try to load cookies from all supported browsers",
     )
-    for browser in browser_cookie3.all_browsers:
+    for name, browser in sorted(browser_cookie3._BROWSER_MAP.items()):
+        os_list = tuple(sorted(browser.SUPPORTED_OPERATING_SYSTEMS))
         mutually_exclusive_group.add_argument(
-            "--" + browser.__name__,
+            "--" + name,
             dest="browser",
             action="store_const",
             const=browser,
-            help=f"Load cookies from {browser.__name__.title()} browser",
+            help=f"Load cookies from {browser._NAME} browser {os_list}",
         )
     group.add_argument("-f", "--cookie-file", help="Use specific cookie file (default is to autodetect).")
     group.add_argument("-k", "--key-file", help="Use specific key file (default is to autodetect).")
@@ -54,16 +52,12 @@ def parse_args(args: Optional[Sequence[str]] = None):
     return parser, parsed_args
 
 
-def dump_cookie(cookie: Cookie) -> str:
-    return json.dumps({k: v for k, v in vars(cookie).items() if v is not None and (k, v) != ("_rest", {})})
-
-
 def main(args: Optional[Sequence[str]] = None):
     parser, p_args = parse_args(args)
-
+    extractor: browser_cookie3._CookieExtractor = p_args.browser
     try:
-        if p_args.browser:
-            cookie_jar: CookieJar = p_args.browser(cookie_file=p_args.cookie_file, key_file=p_args.key_file)
+        if extractor:
+            cookie_jar: CookieJar = extractor(cookie_file=p_args.cookie_file, key_file=p_args.key_file)
         else:
             cookie_jar = browser_cookie3.load()
 
@@ -75,7 +69,7 @@ def main(args: Optional[Sequence[str]] = None):
             if not p_args.json:
                 print(cookie.value)  # noqa T201
             else:
-                print(dump_cookie(cookie))  # noqa T201
+                print(browser_cookie3._dump_cookie(cookie))  # noqa T201
             break
     else:
         raise SystemExit(1)

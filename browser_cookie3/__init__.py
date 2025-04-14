@@ -18,7 +18,7 @@ import sys
 import tempfile
 from abc import ABC, abstractmethod
 from io import BufferedReader, BytesIO
-from typing import Any, ClassVar, Literal, NamedTuple, NewType, Optional, TypeVar, Union, get_args
+from typing import Any, ClassVar, Literal, NamedTuple, NewType, Optional, TypeVar, Union
 
 shadowcopy = None
 _IS_LINUX = _IS_WINDOWS = _IS_MACOS = False
@@ -152,15 +152,18 @@ def _get_osx_keychain_password(osx_key_service: str, osx_key_user: str) -> bytes
 
 
 def _expand_win_path(path: Union[_WinPath, str]) -> _ExpandedPath:
-    if not isinstance(path, tuple):
+    if isinstance(path, str):
         path = _WinPath("APPDATA", path)
+    if not isinstance(path, tuple):
+        raise TypeError(f"Expected WinPath or str, not {type(path).__name__}")
+    path = _WinPath(*path)
     app_data = os.getenv(path.env, "")
     return _ExpandedPath(os.path.join(app_data, path.path))
 
 
 def _expand_paths_impl(os_name: SupportedOS, *paths: Union[_WinPath, str]) -> Generator[_ExpandedPath]:
     """Expands user paths on Linux, OSX, and windows"""
-    assert os_name in get_args(SupportedOS)
+    assert os_name in ("windows", "linux", "osx")
     if not paths:
         return
 
@@ -1069,6 +1072,7 @@ class Safari(_Browser):
     """Class for Safari"""
 
     _NAME = "Safari"
+    SUPPORTED_OPERATING_SYSTEMS = ("osx",)
     APPLE_TO_UNIX_TIME = 978307200
     NEW_ISSUE_MESSAGE = f"Page format changed.\nPlease create a new issue on: {_NEW_ISSUE_URL}"
     OSX_COOKIE_PATHS: ClassVar[_StrTuple] = (
