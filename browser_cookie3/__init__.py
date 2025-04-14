@@ -203,11 +203,16 @@ def _expand_paths_impl(os_name: SupportedOS, *paths: Union[_WinPath, str]) -> Ge
         # glob will return results in arbitrary order. sorted() is use to make output predictable.
         # can use return here without using `_expand_paths()` below.
         # but using generator can be useful if we plan to parse all `Cookies` files later.
-        yield from sorted(_ExpandedPath(child) for child in glob.iglob(path))
+        for child in glob.iglob(path):
+            yield _ExpandedPath(child)
+
+
+def _newest(paths: list[_ExpandedPath]) -> Optional[_ExpandedPath]:
+    return max(paths, key=lambda path: os.lstat(path).st_mtime, default=None)
 
 
 def _expand_paths(os_name: SupportedOS, *paths: Union[_WinPath, str]) -> Optional[_ExpandedPath]:
-    return next(_expand_paths_impl(os_name, *paths), None)
+    return _newest(sorted(_expand_paths_impl(os_name, *paths)))
 
 
 def _normalize_paths_chromium(paths: _StrTuple, channels: Optional[_StrTuple] = None) -> tuple[_StrTuple, _StrTuple]:
