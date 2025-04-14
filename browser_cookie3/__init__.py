@@ -9,6 +9,7 @@ import configparser
 import glob
 import http.cookiejar
 import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -17,8 +18,33 @@ import subprocess
 import sys
 import tempfile
 from abc import ABC, abstractmethod
+from enum import Enum, auto
 from io import BufferedReader, BytesIO
 from typing import Any, ClassVar, Literal, NamedTuple, NewType, Optional, TypeVar, Union
+
+
+class BrowserName(Enum):
+    CHROME = auto()
+    CHROMIUM = auto()
+    OPERA = auto()
+    OPERA_GX = auto()
+    BRAVE = auto()
+    EDGE = auto()
+    VIVALDI = auto()
+    FIREFOX = auto()
+    LIBREWOLF = auto()
+
+
+_B = BrowserName
+
+
+logger = logging.getLogger("browser_cookie3")
+logger.setLevel(logging.INFO)
+console_handler = logging.StreamHandler()
+formatter = logging.Formatter("%(levelname)s - %(message)s")
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
 
 shadowcopy = None
 _IS_LINUX = _IS_WINDOWS = _IS_MACOS = False
@@ -992,7 +1018,7 @@ class FirefoxBased(_Browser):
             with Path(self.session_file).open("rb") as file_obj:
                 json_data: _NestedJson[_DictCookies] = json.load(file_obj)
         except ValueError as e:
-            print(f"Error parsing {self._NAME} session JSON: {e}")  # noqa: T201
+            logger.error(f"Error parsing {self._NAME} session JSON: {e}")
         else:
             for window in json_data.get("windows", []):
                 for cookie in window.get("cookies", []):
@@ -1007,7 +1033,7 @@ class FirefoxBased(_Browser):
                 file_obj.read(8)
                 json_data: _Json[_DictCookies] = json.loads(lz4.block.decompress(file_obj.read()))
         except ValueError as e:
-            print(f"Error parsing {self._NAME} session JSON LZ4: {e}")  # noqa: T201
+            logger.error(f"Error parsing {self._NAME} session JSON LZ4: {e}")
         else:
             for cookie in json_data.get("cookies", []):
                 if self.domain_name == "" or self.domain_name in cookie.get("host", ""):
