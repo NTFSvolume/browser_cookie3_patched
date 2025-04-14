@@ -1472,8 +1472,10 @@ def load(domain_name: str = "") -> http.cookiejar.CookieJar:
     return cookie_jar
 
 
-def _dump_cookie(cookie: http.cookiejar.Cookie) -> str:
-    return json.dumps({k: v for k, v in vars(cookie).items() if v is not None and (k, v) != ("_rest", {})}, indent=2)
+def _dump_cookie(cookie: http.cookiejar.Cookie, indent: int = 4, **kwargs: Any) -> str:
+    return json.dumps(
+        {k: v for k, v in vars(cookie).items() if v is not None and (k, v) != ("_rest", {})}, indent=indent, **kwargs
+    )
 
 
 def _get_browser(browser_name: str) -> type[_Browser]:
