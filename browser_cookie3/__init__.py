@@ -1447,7 +1447,9 @@ ALL_EXTRACTORS: list[_CookieExtractor] = [
 
 SUPPORTED_BROWSERS = [browser.__name__ for browser in ALL_EXTRACTORS]
 
-BROWSER_MAP = dict(zip(SUPPORTED_BROWSERS, ALL_BROWSERS))
+_BROWSER_MAP = dict(zip(SUPPORTED_BROWSERS, ALL_BROWSERS))
+
+_EXTRACTOR_MAP = dict(zip(SUPPORTED_BROWSERS, ALL_EXTRACTORS))
 
 
 all_browsers = ALL_EXTRACTORS  # Old name
@@ -1469,21 +1471,28 @@ def load(domain_name: str = "") -> http.cookiejar.CookieJar:
     return cookie_jar
 
 
-def get_browser(browser_name: str) -> Optional[type[_Browser]]:
-    if not browser_name:
-        return None
-    return BROWSER_MAP.get(browser_name)
-
-
-def load_from(browser_name: str) -> http.cookiejar.CookieJar:
+def _get_browser(browser_name: str) -> type[_Browser]:
     if not browser_name or not isinstance(browser_name, str):
         raise TypeError("browser_name value needs to be a none empty string")
-    browser = get_browser(browser_name)
+    browser = _BROWSER_MAP.get(browser_name.lower())
     if not browser:
-        raise UnsupportedOSError(f"Browser {browser_name} is not a known browser")
-    if not browser.is_supported():
-        raise UnsupportedOSError(f"Browser {browser_name} is not supported in {_CURRENT_OS}")
-    return browser().load()
+        raise BrowserCookieError(f"Browser {browser_name} is not a known browser")
+    return browser
+
+
+def _get_extractor(browser_name: str) -> _CookieExtractor:
+    _ = _get_browser(browser_name)  # Just to do the same validations
+    return _EXTRACTOR_MAP[browser_name.lower()]
+
+
+get_browser = _get_extractor  # This is what most people would assume the function does
+
+
+def load_from(
+    browser_name: str, cookie_file: Optional[str] = None, domain_name: str = "", key_file: Optional[str] = None
+) -> http.cookiejar.CookieJar:
+    browser = _get_browser(browser_name)
+    return browser(cookie_file, domain_name, key_file).load()
 
 
 __all__ = [
