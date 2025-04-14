@@ -1455,16 +1455,16 @@ def load(domain_name: str = "") -> http.cookiejar.CookieJar:
     """Try to load cookies from all supported browsers and return combined cookiejar
     Optionally pass in a domain name to only load cookies from the specified domain
     """
-    cj = http.cookiejar.CookieJar()
+    cookie_jar = http.cookiejar.CookieJar()
     for browser in ALL_BROWSERS:
         if not browser.is_supported():
             continue
         try:
             for cookie in browser(domain_name=domain_name).load():
-                cj.set_cookie(cookie)
+                cookie_jar.set_cookie(cookie)
         except BrowserCookieError:
             pass
-    return cj
+    return cookie_jar
 
 
 __all__ = [
@@ -1472,6 +1472,8 @@ __all__ = [
     "ALL_EXTRACTORS",
     "SUPPORTED_BROWSERS",
     "BrowserCookieError",
+    "CookieDecryptionError",
+    "UnsupportedOSError",
     "all_browsers",
     "arc",
     "brave",
