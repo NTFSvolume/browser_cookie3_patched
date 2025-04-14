@@ -1447,14 +1447,16 @@ ALL_EXTRACTORS: list[_CookieExtractor] = [
 
 SUPPORTED_BROWSERS = [browser.__name__ for browser in ALL_EXTRACTORS]
 
+BROWSER_MAP = dict(zip(SUPPORTED_BROWSERS, ALL_BROWSERS))
+
 
 all_browsers = ALL_EXTRACTORS  # Old name
 
 
 def load(domain_name: str = "") -> http.cookiejar.CookieJar:
-    """Try to load cookies from all supported browsers and return combined cookiejar
-    Optionally pass in a domain name to only load cookies from the specified domain
-    """
+    """Try to load cookies from all supported browsers and return combined cookiejar.
+
+    Optionally pass in a domain name to only load cookies from the specified domain"""
     cookie_jar = http.cookiejar.CookieJar()
     for browser in ALL_BROWSERS:
         if not browser.is_supported():
@@ -1465,6 +1467,23 @@ def load(domain_name: str = "") -> http.cookiejar.CookieJar:
         except BrowserCookieError:
             pass
     return cookie_jar
+
+
+def get_browser(browser_name: str) -> Optional[type[_Browser]]:
+    if not browser_name:
+        return None
+    return BROWSER_MAP.get(browser_name)
+
+
+def load_from(browser_name: str) -> http.cookiejar.CookieJar:
+    if not browser_name or not isinstance(browser_name, str):
+        raise TypeError("browser_name value needs to be a none empty string")
+    browser = get_browser(browser_name)
+    if not browser:
+        raise UnsupportedOSError(f"Browser {browser_name} is not a known browser")
+    if not browser.is_supported():
+        raise UnsupportedOSError(f"Browser {browser_name} is not supported in {_CURRENT_OS}")
+    return browser().load()
 
 
 __all__ = [
