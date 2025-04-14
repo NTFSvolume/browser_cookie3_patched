@@ -897,6 +897,7 @@ class Vivaldi(ChromiumBased):
 class FirefoxBased(_Browser):
     """Superclass for Firefox based browsers"""
 
+    SUPPORTED_OPERATING_SYSTEMS = ("windows", "linux", "osx")
     LINUX_DATA_DIRS: ClassVar[_StrTuple] = ()
     WINDOWS_DATA_DIRS: ClassVar[tuple[_WinPath, ...]] = ()
     OSX_DATA_DIRS: ClassVar[_StrTuple] = ()
@@ -1495,6 +1496,10 @@ def load_from(
     return browser(cookie_file, domain_name, key_file).load()
 
 
+def get_supported_browsers():
+    return [name for name, browser in _BROWSER_MAP.items() if browser.is_supported()]
+
+
 __all__ = [
     "ALL_BROWSERS",
     "ALL_EXTRACTORS",
@@ -1523,4 +1528,5 @@ __all__ = [
 
 
 if __name__ == "__main__":
+    print(get_supported_browsers())  # noqa: T201
     print(load())  # noqa: T201
